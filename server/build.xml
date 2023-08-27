@@ -23,6 +23,7 @@
             <manifest>
                 <attribute name="Main-Class" value="${ant.project.name}"/>
                 <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
+                <attribute name="Supported-By" value="https://mmo-dev.info"/>
             </manifest>
         </jar>
     </target>

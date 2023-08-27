@@ -83,24 +83,22 @@ else if ( $action == 'update' )
 		'/add_item', 
 		'/online', 
 		'/statistics',
-		'/items_delayed_status'
+		'/items_delayed_status',
+		'/restart',
+		'/shutdown',
+		'/shutdown_abort'
 	];
 
-	if ( $command[0] == $whitelistCommands[0] ) // /start
-	{
-		$api->sendMessage([ 
-			'chat_id' => USER_ID, 
-			'text' => '/help - Command list', 
-			'parse_mode' => 'html'
-		]);
-	}
-	else if ( $command[0] == $whitelistCommands[1] || $command[0] == $whitelistCommands[2] ) // /help OR /menu
+	if ( in_array( $command[0], [ $whitelistCommands[0], $whitelistCommands[1], $whitelistCommands[2] ] ) )
 	{
 		$text = '<b>Сommand list</b>';
 		$text .= "\n\n/add_item {char name} {item id} {item count}";
 		$text .= "\n/online";
 		$text .= "\n/statistics";
 		$text .= "\n/items_delayed_status";
+		$text .= "\n/shutdown {seconds}";
+		$text .= "\n/restart {seconds}";
+		$text .= "\n/shutdown_abort";
 		
 		/*$keyboard = [ 
 			//'inline_keyboard' => [ 
@@ -314,7 +312,7 @@ else if ( $action == 'update' )
 						id.id DESC
 				");
 
-				$text .= "\n\n<b>Выдача предметов:</b>\n<pre><code>";
+				$text .= "\n\n<b>Выдача предметов:</b>\n<pre>";
 				if ( is_array( $entities ) )
 				{
 					$text .= '|' . /*column( 'Char name', true ) .*/ column( 'Item Id' ) . column( 'Count' ) . column( 'Description' ) . column( 'Status' ) . "\n";
@@ -328,14 +326,34 @@ else if ( $action == 'update' )
 						$text .= column( $entity['payment_status'] ? "yes" : "no" ) . "\n";
 					}
 				}
-				$text .= '</code></pre>';	
+				$text .= '</pre>';
 				
 				$api->sendMessage([ 
 					'chat_id' => USER_ID, 
 					'text' => $text,
 					'parse_mode' => 'html'
 				]);
-			}
+			} else if ( $command[0] == '/restart' || $command[0] == '/shutdown' ) {
+			    $sql = "INSERT INTO `delayed_tasks` ( `event`, `args` ) VALUES ( ?, ? )";
+
+                $rowCount = $gameDb->prepareAndExecute( $sql, [ substr( $command[0], 1 ), $command[1] ] )->rowCount();
+
+                $api->sendMessage([
+                	'chat_id' => USER_ID,
+                	'text' => $rowCount ? 'Successfully!' : 'Failed!',
+                	'parse_mode' => 'html'
+                ]);
+			} else if ( $command[0] == '/shutdown_abort' ) {
+			    $sql = "INSERT INTO `delayed_tasks` ( `event`, `args` ) VALUES ( ?, '' )";
+
+			    $rowCount = $gameDb->prepareAndExecute( $sql, [ 'abort' ] )->rowCount();
+
+                $api->sendMessage([
+                    'chat_id' => USER_ID,
+                    'text' => $rowCount ? 'Successfully!' : 'Failed!',
+                    'parse_mode' => 'html'
+                    ]);
+            }
 		}
 		catch ( \PDOException $e )
 		{
