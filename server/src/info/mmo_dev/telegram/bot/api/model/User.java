@@ -1,10 +1,10 @@
-package info.mmo_dev.model;
+package info.mmo_dev.telegram.bot.api.model;
 
 /**
  * @see <a href="https://core.telegram.org/bots/api#user">User</a>
  */
 public class User {
-    public int id;
+    public long id;
 
     public boolean is_bot;
 
