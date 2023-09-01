@@ -23,22 +23,23 @@ public class RequestApi {
         _baseUrl = "https://api.telegram.org/bot" + token + "/";
     }
 
-    private <T> ResponseApi<T> getRequest(String method, String postData, final Class<T> clazz) {
-        try
-        {
+    private <T> ResponseApi<T> request(String method, String postData, final Class<T> clazz) {
+        String jsonString;
+
+        try {
             URL url = new URL(_baseUrl + method);
 
             HttpURLConnection req = (HttpURLConnection) url.openConnection();
             req.setRequestMethod("POST");
             req.setRequestProperty("Content-Type", "application/json");
             req.setRequestProperty("Accept", "application/json");
-            req.setDoInput( true);
+            req.setDoInput(true);
             req.setUseCaches(false);
 
             if (postData != null) {
                 req.setDoOutput(true);
 
-                try(OutputStream os = req.getOutputStream()) {
+                try (OutputStream os = req.getOutputStream()) {
                     byte[] input = postData.getBytes(StandardCharsets.UTF_8);
                     os.write(input, 0, input.length);
                 }
@@ -51,13 +52,13 @@ public class RequestApi {
                 in.lines().forEach(str::append);
             }
 
-            return _gson.fromJson(str.toString(), getResponseType(clazz));
-        }
-        catch(Exception e)
-        {
+            jsonString = str.toString();
+        } catch (Exception e) {
+            jsonString = "{ok:false,result:false,description: \"" + e.getMessage().replace(_baseUrl, "/") + "\"}";
             e.printStackTrace();
-            return _gson.fromJson("{ok:false,result:false,description: \"" + e.getMessage().replace(_baseUrl, "/") + "\"}", getResponseType(clazz));
         }
+
+        return _gson.fromJson(jsonString, getResponseType(clazz));
     }
 
     private Type getResponseType(Class<?> parameter) {
@@ -80,7 +81,7 @@ public class RequestApi {
     }
 
     public ResponseApi<WebhookInfo> getWebhookInfo() {
-        return getRequest("getWebhookInfo", null, WebhookInfo.class);
+        return request("getWebhookInfo", null, WebhookInfo.class);
     }
 
     public ResponseApi<Boolean> setWebhook(/*String url, InputFile certificate, String ip_address, int max_connections,
@@ -94,16 +95,46 @@ public class RequestApi {
         //parameters.put("drop_pending_updates", drop_pending_updates);
         //parameters.put("secret_token", secret_token);
 
-        return getRequest("setWebhook", _gson.toJson(parameters), Boolean.class);
+        return request("setWebhook", _gson.toJson(parameters), Boolean.class);
     }
 
-    public ResponseApi<Message> sendMessage(int chat_id, String text, int message_thread_id) {
+    // TODO: Only required fields
+    public ResponseApi<Message> sendMessage(long chat_id, String text) {
+        return sendMessage(
+                chat_id,
+                text,
+                0,
+                "html",
+                null,
+                true,
+                false,
+                false,
+                0,
+                true,
+                null
+        );
+    }
+
+    public ResponseApi<Message> sendMessage(long chat_id, String text, int message_thread_id, String parse_mode,
+                                            List<MessageEntity> entities, boolean disable_web_page_preview,
+                                            boolean disable_notification, boolean protect_content,
+                                            int reply_to_message_id, boolean allow_sending_without_reply,
+                                            Object reply_markup) {
         Map<String, Object> parameters = new HashMap<>();
         parameters.put("chat_id", chat_id);
         parameters.put("text", text);
         parameters.put("message_thread_id", message_thread_id);
 
-        return getRequest("sendMessage", _gson.toJson(parameters), Message.class);
+        parameters.put("parse_mode", parse_mode);
+        parameters.put("entities", entities);
+        parameters.put("disable_web_page_preview", disable_web_page_preview);
+        parameters.put("disable_notification", disable_notification);
+        parameters.put("protect_content", protect_content);
+        parameters.put("reply_to_message_id", reply_to_message_id);
+        parameters.put("allow_sending_without_reply", allow_sending_without_reply);
+        parameters.put("reply_markup", reply_markup);
+
+        return request("sendMessage", _gson.toJson(parameters), Message.class);
     }
 
     public ResponseApi<Update[]> getUpdates(int limit, int timeout, List<String> allowed_updates) {
@@ -114,9 +145,11 @@ public class RequestApi {
         parameters.put("timeout", timeout);
         parameters.put("allowed_updates", allowed_updates);
 
-        ResponseApi<Update[]> response = getRequest("getUpdates", _gson.toJson(parameters), Update[].class);
+        ResponseApi<Update[]> response = request("getUpdates", _gson.toJson(parameters), Update[].class);
 
-        _lastUpdateId = response.result[ response.result.length - 1 ].update_id + 1;
+        int updatesCount = response.result.length;
+
+        _lastUpdateId = updatesCount > 0 ? response.result[updatesCount - 1].update_id + 1 : 0;
 
         return response;
     }

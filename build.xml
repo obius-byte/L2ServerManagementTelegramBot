@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<project name="DelayedTasksManager" default="package">
+
+    <property name="src" location="src"/>
+    <property name="dist" location="dist" />
+    <property name="build" location="build"/>
+    <property name="build.dist" location="${build}/dist"/>
+    <property name="classes" location="${build}/classes"/>
+
+    <path id="classpath">
+        <fileset dir="${dist}/libs">
+            <include name="**/*.jar" />
+        </fileset>
+    </path>
+
+    <property name="build.classpath" refid="classpath"/>
+
+    <target name="clean">
+        <delete dir="${build}"/>
+    </target>
+
+    <target name="compile">
+        <mkdir dir="${classes}"/>
+        <javac srcdir="${src}" destdir="${classes}" includeAntRuntime="false" classpath="${build.classpath}" />
+    </target>
+
+    <target name="run" depends="compile">
+        <java classname="${ant.project.name}" classpath="${classes}"/>
+    </target>
+
+    <target name="package" depends="compile">
+        <jar destfile="${build.dist}/delayed-tasks-manager.jar" basedir="${classes}">
+            <manifest>
+                <attribute name="Main-Class" value="${ant.project.name}"/>
+                <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
+                <attribute name="Supported-By" value="https://mmo-dev.info"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <target name="zip" depends="clean, package">
+        <copy todir="${build.dist}">
+            <fileset dir="${dist}/libs">
+                <include name="*.jar" />
+            </fileset>
+        </copy>
+        <copy file="${dist}/config/delayed-tasks-manager.properties" tofile="${build.dist}/config/delayed-tasks-manager.properties"/>
+        <zip destfile="${build}/delayed-tasks-manager.zip" basedir="${build.dist}" />
+    </target>
+
+</project>
