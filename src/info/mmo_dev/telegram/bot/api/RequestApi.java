@@ -1,6 +1,7 @@
 package info.mmo_dev.telegram.bot.api;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import info.mmo_dev.telegram.bot.api.model.*;
 
 import java.io.*;
@@ -55,10 +56,14 @@ public class RequestApi {
             jsonString = str.toString();
         } catch (Exception e) {
             jsonString = "{ok:false,result:false,description: \"" + e.getMessage().replace(_baseUrl, "/") + "\"}";
-            e.printStackTrace();
+            //e.printStackTrace();
         }
 
-        return _gson.fromJson(jsonString, getResponseType(clazz));
+        try {
+            return _gson.fromJson(jsonString, getResponseType(clazz));
+        } catch (JsonSyntaxException e) {
+            return _gson.fromJson(jsonString, getResponseType(Boolean.class));
+        }
     }
 
     private Type getResponseType(Class<?> parameter) {
