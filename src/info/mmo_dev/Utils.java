@@ -1,19 +1,19 @@
 package info.mmo_dev;
 
-import java.util.Collections;
-
 public class Utils {
 
     public static String column(String text, boolean first, int length) {
         int textLen = text.length();
 
-        if ( first )
-            return text + String.join("", Collections.nCopies(length - textLen, " ")) + " |";
+        if (textLen > length) {
+            int endIndex = length - (first ? 3 : 4);
+            text = text.substring(0, endIndex) + "...";
+        }
 
-        return String.join("", Collections.nCopies(( length / 2 ) - textLen, " ")) + text + " |";
-    }
+        String format = first
+                ? "| %" + length + "s |"
+                : "%" + length + "s |";
 
-    public static String column(String text) {
-        return column(text, false, 26);
+        return String.format(format, text);
     }
 }

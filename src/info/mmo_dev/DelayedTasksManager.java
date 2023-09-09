@@ -1,12 +1,11 @@
 package info.mmo_dev;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import info.mmo_dev.emulators.*;
-import info.mmo_dev.telegram.bot.api.RequestApi;
-import info.mmo_dev.telegram.bot.api.ResponseApi;
-import info.mmo_dev.telegram.bot.api.model.Update;
-import info.mmo_dev.telegram.bot.api.model.WebhookInfo;
+import info.mmo_dev.telegram.bot.api.*;
+import info.mmo_dev.telegram.bot.api.model.*;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -15,18 +14,36 @@ import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class DelayedTasksManager {
 
     private static boolean DEBUG;
 
+    public final Gson _json;
+
     private EmulatorAdapter _emulator;
 
-    private RequestApi _telegramApi;
+    private RequestApi _api;
 
     private final Map<String, List<String>> _tables = new HashMap<>();
 
+    private static final Map<String, String> _actualMenu = new HashMap<String, String>() {{
+        put("add_item", "Выдача предметов");
+        put("online", "Вывод текущего онлайна персонажей");
+        //put("statistics", "");
+        put("items_delayed_status", "Статус выдачи предметов");
+        put("shutdown", "Выключение сервера");
+        put("restart", "Рестарт сервера");
+        put("shutdown_abort", "Отмена действий /shutdown и /restart");
+        put("thread_pool_status", "Текущий статус пула потоков");
+        //put("chars", "");
+    }};
+
     private DelayedTasksManager() {
+        _json = new GsonBuilder().setPrettyPrinting().create();
+
         try {
             Config.initialize();
         } catch (Exception e) {
@@ -69,99 +86,177 @@ public class DelayedTasksManager {
 
         System.out.println("DelayedTasksManager: Emulator " + (_emulator != null ? "detected[" + _emulator.getType() + "]" : "not detected!"));
 
-        _telegramApi = new RequestApi(Config.BOT_TOKEN);
+        _api = new RequestApi(Config.BOT_TOKEN);
 
-        ResponseApi<WebhookInfo> webhookInfo = _telegramApi.getWebhookInfo();
+        ResponseApi<WebhookInfo> webhookInfo = _api.getWebhookInfo();
         if (!webhookInfo.ok) {
             System.out.println("DelayedTasksManager: " + webhookInfo.description);
             return;
         }
 
         if (webhookInfo.result.url != null && webhookInfo.result.url.length() > 0) {
-            System.out.println("DelayedTasksManager: " + _telegramApi.setWebhook().description);
+            System.out.println("DelayedTasksManager: " + _api.setWebhook().description);
         }
 
         ScheduledThreadPoolExecutor threadPool = new ScheduledThreadPoolExecutor(1);
         threadPool.scheduleWithFixedDelay(() -> {
-            try {
-                ResponseApi<Update[]> response = _telegramApi.getUpdates(10, 0, new ArrayList<String>() {{
+            List<String> allowed_updates = new ArrayList<String>() {{
                     add("message");
-                }});
-                Update[] updates = response.result;
-                if (updates.length > 0) {
-                    for (Update update : updates) {
-                        long userId = update.message.from.id;
-                        if (Config.USER_IDS.contains(userId)) {
-                            handleUpdate(update);
-                        } else {
-                            _telegramApi.sendMessage(
-                                    userId,
-                                    "Ты кто такой? Давай, до свидания!",
-                                    0,
-                                    "html",
-                                    null,
-                                    true,
-                                    false,
-                                    false,
-                                    update.message.message_id, // reply_to_message_id
-                                    true,
-                                    null
-                            );
-                        }
-                    }
+                    //add("callback_query");
+                }};
+            ResponseApi<Update[]> response = _api.getUpdates(10, 0, allowed_updates);
+
+            if (!response.ok) {
+                System.out.println("DelayedTasksManager: " + response.description);
+                return;
+            }
+
+            Update[] updates = response.result;
+            if (updates.length > 0) {
+                for (Update update : updates) {
+                    handleUpdate(update);
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
         }, 1, 1, TimeUnit.SECONDS);
     }
 
     private void handleUpdate(Update update) {
-        long userId = update.message.from.id;
-        String messageText = update.message.text;
-        if (messageText != null && messageText.length() > 0) {
-            String[] command = messageText.split("\\s+");
+        long userId;
+        int messageId;
+        String messageText;
+        if (update.message != null) {
+            userId = update.message.from.id;
+            messageId = update.message.message_id;
 
-            List<String> menuCommands = Arrays.asList("/start", "/menu", "/help");
+            messageText = "";
+            if (update.message.reply_to_message != null) {
+                messageText = update.message.reply_to_message.text + " ";
+            }
 
-            if (menuCommands.contains(command[0])) {
-                String text = "<b>Сommand list</b>";
-                text += "\n\n/add_item {char name} {item id} {item count}";
-                text += "\n/online";
-                //text += "\n/statistics";
-                text += "\n/items_delayed_status";
-                text += "\n/shutdown {seconds}";
-                text += "\n/restart {seconds}";
-                text += "\n/shutdown_abort";
-                text += "\n/thread_pool_status";
-                text += "\n/chars";
+            messageText += update.message.text;
+        } /*else if (update.callback_query != null) {
+            userId = update.callback_query.from.id;
+            messageId = update.callback_query.message.message_id;
+            messageText = update.callback_query.data;
+        }*/ else {
+            System.out.println("userId not found! update: " + _json.toJson(update));
+            return;
+        }
 
-                _telegramApi.sendMessage(userId, text);
-            } else if (command[0].equals("/add_item")) {
-                if (command.length == 4) {
-                    _telegramApi.sendMessage(userId, addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
-                }
-            } else if (command[0].equals("/online")) {
-                _telegramApi.sendMessage(userId, getOnline());
-            } else if (command[0].equals("/items_delayed_status")) {
-                _telegramApi.sendMessage(userId, "<pre>" + getItemsDelayedStatus() + "</pre>");
-            } else if (command[0].equals("/restart") || command[0].equals("/shutdown")) {
-                if (command.length == 2) {
-                    String text = executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"));
-                    _telegramApi.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+        if (!Config.USER_IDS.contains(userId)) {
+            _api.sendMessage(
+                    userId,
+                    "Ты кто такой? Давай, до свидания!",
+                    0,
+                    "html",
+                    null,
+                    true,
+                    false,
+                    false,
+                    messageId, // reply_to_message_id
+                    true,
+                    null
+            );
+            return;
+        }
+
+        if (messageText.length() > 0) {
+            try {
+                String[] command = messageText.split("\\s+");
+
+                if (command[0].equals("/start")) {
+                    BotCommandScopeChat botCommandScopeChat = new BotCommandScopeChat(userId);
+                    ResponseApi<BotCommand[]> response = _api.getMyCommands(botCommandScopeChat, "ru");
+                    List<String> currentBotCommands = Stream.of(response.result)
+                            .flatMap(c -> Stream.of(c.command))
+                            .collect(Collectors.toList());
+
+                    if (_actualMenu.size() == response.result.length) {
+                        for (String cmd: _actualMenu.keySet()) {
+                            if (!currentBotCommands.contains(cmd)) {
+                                _api.deleteMyCommands(botCommandScopeChat, "ru");
+
+                                List<BotCommand> botCommandList = new ArrayList<>();
+                                _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
+
+                                _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
+                                break;
+                            }
+                        }
+                        /*for (BotCommand cmd : response.result) {
+                            if (!_actualMenu.containsKey(cmd.command)) {
+
+                            }
+                        }*/
+                   } else {
+                        _api.deleteMyCommands(botCommandScopeChat, "ru");
+
+                        List<BotCommand> botCommandList = new ArrayList<>();
+                        _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
+
+                        _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
+                    }
+                } else if (command[0].equals("/add_item")) {
+                    if (command.length == 4) {
+                        _api.sendMessage(userId, addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
+                    } else {
+                        _api.sendMessage(
+                                userId,
+                                "/add_item",
+                                0,
+                                "html",
+                                null,
+                                true,
+                                false,
+                                false,
+                                0,
+                                true,
+                                new ForceReply(true, "nickName itemId itemCount", false)
+                        );
+                    }
+                } else if (command[0].equals("/online")) {
+                    _api.sendMessage(userId, getOnline());
+                } else if (command[0].equals("/items_delayed_status")) {
+                    _api.sendMessage(userId, "<pre>" + getItemsDelayedStatus() + "</pre>");
+                } else if (command[0].equals("/restart") || command[0].equals("/shutdown")) {
+                    if (command.length == 2) {
+                        String text = executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"));
+                        _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                    } else {
+                        _api.sendMessage(
+                                userId,
+                                command[0],
+                                0,
+                                "html",
+                                null,
+                                true,
+                                false,
+                                false,
+                                0,
+                                true,
+                                new ForceReply(true, "seconds", false)
+                        );
+                    }
+                } else if (command[0].equals("/shutdown_abort")) {
+                    String text = executeShutdownAbort();
+                    _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                } else if (command[0].equals("/thread_pool_status")) {
+                    _api.sendMessage(userId, "<pre>" + getThreadPoolStatus() + "</pre>");
+                } else if (command[0].equals("/chars")) {
+                    // TODO: command[1] - offset
+                    _api.sendMessage(userId, "<pre>" + getChars() + "</pre>");
                 } else {
-                    // TODO: throw new ArrayIndexOutOfBoundsException???
+                    if (DEBUG) {
+                        _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
+                    } else
+                        _api.sendMessage(userId, "<pre>Unregistered command: [" + messageText + "]</pre>");
                 }
-            } else if (command[0].equals("/shutdown_abort")) {
-                String text = executeShutdownAbort();
-                _telegramApi.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
-            } else if (command[0].equals("/thread_pool_status")) {
-                _telegramApi.sendMessage(userId, "<pre>" + getThreadPoolStatus() + "</pre>");
-            } else if (command[0].equals("/chars")) {
-                // TODO: command[1] - offset
-                _telegramApi.sendMessage(userId, "<pre>" + getChars() + "</pre>");
-            } else {
-                _telegramApi.sendMessage(userId, "<pre>Unregistered command: [" + messageText + "]</pre>");
+            } catch (Exception e) {
+                _api.sendMessage(userId, "<pre>" + e.getMessage() + "</pre>");
+                e.printStackTrace();
+                if (DEBUG) {
+                    _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
+                }
             }
         }
     }
@@ -175,6 +270,8 @@ public class DelayedTasksManager {
             sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
         } else if (_tables.containsKey("z_queued_items")) {
             sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
+        } else if (_tables.containsKey("character_items")) {
+            sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
         } else {
             return "Table `items_delayed` and `z_queued_items` not found!";
         }
@@ -205,10 +302,16 @@ public class DelayedTasksManager {
     private String getItemsDelayedStatus() {
         String text = "";
         String sqlSelect;
+        String tableName;
         if (_tables.containsKey("items_delayed")) {
-                sqlSelect = "SELECT * FROM items_delayed ORDER BY payment_id DESC";
+            tableName = "items_delayed";
+            sqlSelect = "SELECT * FROM items_delayed ORDER BY payment_id DESC";
         } else if (_tables.containsKey("z_queued_items")) {
+            tableName = "z_queued_items";
             sqlSelect = "SELECT item_id, item_count AS count, name AS description, status AS payment_status FROM z_queued_items ORDER BY id DESC";
+        } else if (_tables.containsKey("character_items")) {
+            tableName = "character_items";
+            sqlSelect = "SELECT item_id, count, status AS payment_status FROM character_items ORDER BY id DESC";
         } else {
             return "Table `items_delayed` and `z_queued_items` not found!";
         }
@@ -216,17 +319,20 @@ public class DelayedTasksManager {
         try (Connection connection = DatabaseConnectionFactory.getGameConnection();
              PreparedStatement select = connection.prepareStatement(sqlSelect);
              ResultSet resultSet = select.executeQuery()) {
-            text = "|" + /*column( 'Char name', true ) .*/ Utils.column( "Item Id" )
-                    + Utils.column("Count")
-                    + Utils.column("Description", false, 40)
-                    + Utils.column("Status") + "\n";
+            text = Utils.column("Item Id", true, 10)
+                    + Utils.column("Count", false, 10)
+                    + Utils.column("Description", false, 20)
+                    + Utils.column("Status", false, 8) + "\n";
             while (resultSet.next()) {
-                text += "|";
-                //$text .= column( $entity['char_name'], true );
-                text += Utils.column(String.valueOf(resultSet.getInt("item_id")));
-                text += Utils.column(String.valueOf(resultSet.getInt("count")));
-                text += Utils.column(resultSet.getString("description"), false, 40);
-                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending") + "\n";
+                text += Utils.column(String.valueOf(resultSet.getInt("item_id")), true, 10);
+                text += Utils.column(String.valueOf(resultSet.getInt("count")), false, 10);
+
+                String description = "";
+                if (!tableName.equals("character_items"))
+                    description = resultSet.getString("description");
+
+                text += Utils.column(description, false, 20);
+                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending", false, 8) + "\n";
             }
         } catch (SQLException e) {
             text = e.getMessage();
@@ -255,17 +361,15 @@ public class DelayedTasksManager {
         try (Connection connection = DatabaseConnectionFactory.getGameConnection();
              PreparedStatement select = connection.prepareStatement(sql);
              ResultSet resultSet = select.executeQuery()) {
-            text = "|" + /*column( 'Char name', true ) .*/ Utils.column( "Item Id" )
-                    + Utils.column("Char name")
+            text = Utils.column( "Item Id", true, 10 )
+                    + Utils.column("Char name", false, 10)
                     + Utils.column("Description", false, 40)
-                    + Utils.column("Status") + "\n";
+                    + Utils.column("Status", false, 10) + "\n";
             while (resultSet.next()) {
-                text += "|";
-                //$text .= column( $entity['char_name'], true );
-                text += Utils.column(String.valueOf(resultSet.getInt("char_name")));
-                text += Utils.column(String.valueOf(resultSet.getInt("count")));
+                text += Utils.column(String.valueOf(resultSet.getInt("char_name")), true, 10);
+                text += Utils.column(String.valueOf(resultSet.getInt("count")), false, 10);
                 text += Utils.column(resultSet.getString("description"), false, 40);
-                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending") + "\n";
+                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending", false, 10) + "\n";
             }
         } catch (SQLException e) {
             text = e.getMessage();
@@ -274,14 +378,21 @@ public class DelayedTasksManager {
     }
 
     private String executeShutdownSchedule(int seconds, boolean isRestart) {
-        String text = null;
+        if (_emulator == null) {
+            return "_emulator == null";
+        }
+
         Object shutdownObj = _emulator.getShutdownObject();
-        if (shutdownObj != null) {
-            try {
-                if (_emulator.getType() == EmulatorType.Rebellion) {
-                    Method method = shutdownObj.getClass().getDeclaredMethod("schedule", int.class, int.class);
-                    method.invoke(shutdownObj, seconds, isRestart ? 2 : 0);
-                } /*else if (_emulator == Emulator.MobiusDev) {
+        if (shutdownObj == null) {
+            return "shutdownObject == null [" + _emulator.getType() + "]";
+        }
+
+        String text = null;
+        try {
+            if (_emulator.getType() == EmulatorType.Rebellion) {
+                Method method = shutdownObj.getClass().getDeclaredMethod("schedule", int.class, int.class);
+                method.invoke(shutdownObj, seconds, isRestart ? 2 : 0);
+            } /*else if (_emulator == Emulator.MobiusDev) {
                     //Class<?> player = Class.forName("org.l2jmobius.gameserver.model.actor.Player");
 
                     //Method method = player.getDeclaredMethod("startShutdown", player, int.class, boolean.class);
@@ -296,32 +407,37 @@ public class DelayedTasksManager {
                 } else if (_emulator == Emulator.L2Scripts) {
 
                 }*/ else if (_emulator.getType() == EmulatorType.PwSoft) {
-                    Method method = shutdownObj.getClass().getDeclaredMethod("startTelnetShutdown", String.class, int.class, boolean.class);
-                    method.invoke(shutdownObj, "127.0.0.1", seconds, isRestart);
-                } else if (_emulator.getType() == EmulatorType.Lucera) {
-                    Class<?> shutdownModeType = Class.forName(shutdownObj.getClass().getName() + "$ShutdownModeType");
-                    Object[] enums = shutdownModeType.getEnumConstants(); // TODO: 0 - SIGTERM, 1 - SHUTDOWN, 2 - RESTART, 3 - ABORT
-                    Method method = shutdownObj.getClass().getDeclaredMethod("startShutdown", String.class, int.class, shutdownModeType);
-                    method.invoke(shutdownObj, "Telegram bot", seconds, isRestart ? enums[2] : enums[1]);
-                }
-            } catch (Exception e) {
-                text = e.getMessage();
+                Method method = shutdownObj.getClass().getDeclaredMethod("startTelnetShutdown", String.class, int.class, boolean.class);
+                method.invoke(shutdownObj, "127.0.0.1", seconds, isRestart);
+            } else if (_emulator.getType() == EmulatorType.Lucera) {
+                Class<?> shutdownModeType = Class.forName(shutdownObj.getClass().getName() + "$ShutdownModeType");
+                Object[] enums = shutdownModeType.getEnumConstants(); // TODO: 0 - SIGTERM, 1 - SHUTDOWN, 2 - RESTART, 3 - ABORT
+                Method method = shutdownObj.getClass().getDeclaredMethod("startShutdown", String.class, int.class, shutdownModeType);
+                method.invoke(shutdownObj, "Telegram bot", seconds, isRestart ? enums[2] : enums[1]);
             }
-        } else {
-            text = "shutdownObject == null [" + _emulator.getType() + "]";
+        } catch (Exception e) {
+            text = e.getMessage();
         }
+
         return text;
     }
 
     private String executeShutdownAbort() {
-        String text = null;
+        if (_emulator == null) {
+            return "_emulator == null";
+        }
+
         Object shutdownObj = _emulator.getShutdownObject();
-        if (shutdownObj != null) {
-            try {
-                if (_emulator.getType() == EmulatorType.Rebellion) {
-                    Method method = shutdownObj.getClass().getMethod("cancel");
-                    method.invoke(shutdownObj);
-                } /*else if (_emulator == Emulator.MobiusDev) {
+        if (shutdownObj == null) {
+            return "shutdownObject == null [" + _emulator.getType() + "]";
+        }
+
+        String text = null;
+        try {
+            if (_emulator.getType() == EmulatorType.Rebellion) {
+                Method method = shutdownObj.getClass().getMethod("cancel");
+                method.invoke(shutdownObj);
+            } /*else if (_emulator == Emulator.MobiusDev) {
                     Class<?> player = _emulator == Emulator.MobiusDev
                             ? Class.forName("org.l2jmobius.gameserver.model.actor.Player")
                             : Class.forName("net.sf.l2j.gameserver.model.actor.instance.L2PcInstance");
@@ -331,43 +447,46 @@ public class DelayedTasksManager {
                 } else if (_emulator == Emulator.L2Scripts) {
                     //
                 }*/ else if (_emulator.getType() == EmulatorType.PwSoft) {
-                    Method method = shutdownObj.getClass().getMethod("telnetAbort", String.class);
-                    method.invoke(shutdownObj, "127.0.0.1");
-                } else if (_emulator.getType() == EmulatorType.Lucera) {
-                    Method method = shutdownObj.getClass().getMethod("abort");
-                    method.invoke(shutdownObj);
-                }
-            } catch (Exception e) {
-                text = e.getMessage();
+                Method method = shutdownObj.getClass().getMethod("telnetAbort", String.class);
+                method.invoke(shutdownObj, "127.0.0.1");
+            } else if (_emulator.getType() == EmulatorType.Lucera) {
+                Method method = shutdownObj.getClass().getMethod("abort");
+                method.invoke(shutdownObj);
             }
-        } else {
-            text = "shutdownObject == null [" + _emulator.getType() + "]";
+        } catch (Exception e) {
+            text = e.getMessage();
         }
+
         return text;
     }
 
     private String getThreadPoolStatus() {
-        String text = "threadPoolObject == null [" + _emulator.getType() + "]";
-        Object threadPoolObj = _emulator.getThreadPoolObject();
-        if (threadPoolObj != null) {
-            try {
-                if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.Lucera) {
-                    Method method = threadPoolObj.getClass().getMethod("getStats");
-                    text = ((StringBuilder) method.invoke(threadPoolObj)).toString();
-                } else if (_emulator.getType() == EmulatorType.PwSoft /*|| _emulator.getType() == EmulatorType.Lucera*/) {
-                    Method method = threadPoolObj.getClass().getMethod("getTelemetry");
-                    text = (String) method.invoke(threadPoolObj);
-                }
-            } catch (Exception e) {
-                text = e.getMessage();
-            }
+        if (_emulator == null) {
+            return "_emulator == null";
         }
+
+        Object threadPoolObj = _emulator.getThreadPoolObject();
+        if (threadPoolObj == null) {
+            return "threadPoolObject == null [" + _emulator.getType() + "]";
+        }
+
+        String text = "";
+        try {
+            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.Lucera) {
+                Method method = threadPoolObj.getClass().getMethod("getStats");
+                text = ((StringBuilder) method.invoke(threadPoolObj)).toString();
+            } else if (_emulator.getType() == EmulatorType.PwSoft /*|| _emulator.getType() == EmulatorType.Lucera*/) {
+                Method method = threadPoolObj.getClass().getMethod("getTelemetry");
+                text = (String) method.invoke(threadPoolObj);
+            }
+        } catch (Exception e) {
+            text = e.getMessage();
+        }
+
         return text;
     }
 
-    public static void main(String... args)
-            throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-
+    public static void main(String... args) {
         if (args.length == 0) {
             System.out.println("DelayedTasksManager: Main class not specified!");
             return;
@@ -389,9 +508,13 @@ public class DelayedTasksManager {
                 return;
             }
 
-            Method main = clazz.getDeclaredMethod("main", String[].class);
-            args = Arrays.copyOfRange(args, 1, args.length);
-            main.invoke(clazz, new Object[]{args});
+            try {
+                Method main = clazz.getDeclaredMethod("main", String[].class);
+                args = Arrays.copyOfRange(args, 1, args.length);
+                main.invoke(clazz, new Object[]{args});
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
 
         new DelayedTasksManager();

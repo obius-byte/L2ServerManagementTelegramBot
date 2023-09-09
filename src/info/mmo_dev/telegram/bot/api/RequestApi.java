@@ -92,6 +92,7 @@ public class RequestApi {
     public ResponseApi<Boolean> setWebhook(/*String url, InputFile certificate, String ip_address, int max_connections,
                                            List<String> allowed_updates, boolean drop_pending_updates, String secret_token*/) {
         Map<String, Object> parameters = new HashMap<>();
+
         //parameters.put("url", url);
         //parameters.put("certificate", inputFile); // https://core.telegram.org/bots/api#inputfile
         //parameters.put("ip_address", ip_address);
@@ -126,10 +127,10 @@ public class RequestApi {
                                             int reply_to_message_id, boolean allow_sending_without_reply,
                                             Object reply_markup) {
         Map<String, Object> parameters = new HashMap<>();
+
         parameters.put("chat_id", chat_id);
         parameters.put("text", text);
         parameters.put("message_thread_id", message_thread_id);
-
         parameters.put("parse_mode", parse_mode);
         parameters.put("entities", entities);
         parameters.put("disable_web_page_preview", disable_web_page_preview);
@@ -143,8 +144,8 @@ public class RequestApi {
     }
 
     public ResponseApi<Update[]> getUpdates(int limit, int timeout, List<String> allowed_updates) {
-
         Map<String, Object> parameters = new HashMap<>();
+
         parameters.put("offset", _lastUpdateId);
         parameters.put("limit", limit);
         parameters.put("timeout", timeout);
@@ -152,10 +153,41 @@ public class RequestApi {
 
         ResponseApi<Update[]> response = request("getUpdates", _gson.toJson(parameters), Update[].class);
 
-        int updatesCount = response.result.length;
+        if (response.ok) {
+            int updatesCount = response.result.length;
 
-        _lastUpdateId = updatesCount > 0 ? response.result[updatesCount - 1].update_id + 1 : 0;
+            _lastUpdateId = updatesCount > 0 ? response.result[updatesCount - 1].update_id + 1 : 0;
+        }
 
         return response;
+    }
+
+
+    public ResponseApi<BotCommand[]> getMyCommands(BotCommandScope scope, String language_code) {
+        Map<String, Object> parameters = new HashMap<>();
+
+        parameters.put("scope", scope);
+        parameters.put("language_code", language_code);
+
+        return request("getMyCommands", _gson.toJson(parameters), BotCommand[].class);
+    }
+
+    public ResponseApi<Boolean> setMyCommands(List<BotCommand> commands, BotCommandScope scope, String language_code) {
+        Map<String, Object> parameters = new HashMap<>();
+
+        parameters.put("commands", commands);
+        parameters.put("scope", scope);
+        parameters.put("language_code", language_code);
+
+        return request("setMyCommands", _gson.toJson(parameters), Boolean.class);
+    }
+
+    public ResponseApi<Boolean> deleteMyCommands(BotCommandScope scope, String language_code) {
+        Map<String, Object> parameters = new HashMap<>();
+
+        parameters.put("scope", scope);
+        parameters.put("language_code", language_code);
+
+        return request("deleteMyCommands", _gson.toJson(parameters), Boolean.class);
     }
 }

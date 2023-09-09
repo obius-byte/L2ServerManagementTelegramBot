@@ -7,6 +7,10 @@
     <property name="build.dist" location="${build}/dist"/>
     <property name="classes" location="${build}/classes"/>
 
+    <tstamp>
+        <format property="TODAY" pattern="yyyy-MM-dd HH:mm:ss" />
+    </tstamp>
+
     <path id="classpath">
         <fileset dir="${dist}/libs">
             <include name="**/*.jar" />
@@ -33,6 +37,7 @@
             <manifest>
                 <attribute name="Main-Class" value="${ant.project.name}"/>
                 <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
+                <attribute name="Built-Date" value="${TODAY}" />
                 <attribute name="Supported-By" value="https://mmo-dev.info"/>
             </manifest>
         </jar>
@@ -42,6 +47,7 @@
         <copy todir="${build.dist}">
             <fileset dir="${dist}/libs">
                 <include name="*.jar" />
+                <exclude name="mysql-connector-java-8.0.30.jar" />
             </fileset>
         </copy>
         <copy file="${dist}/config/delayed-tasks-manager.properties" tofile="${build.dist}/config/delayed-tasks-manager.properties"/>
