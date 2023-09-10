@@ -39,6 +39,7 @@ public class DelayedTasksManager {
         put("shutdown_abort", "Отмена действий /shutdown и /restart");
         put("thread_pool_status", "Текущий статус пула потоков");
         //put("chars", "");
+        //put("kick", "???");
     }};
 
     private DelayedTasksManager() {
@@ -74,7 +75,8 @@ public class DelayedTasksManager {
                 new PwSoftEmulator(),
                 new RebellionEmulator(),
                 new LuceraEmulator(),
-                new L2ScriptsEmulator()
+                new L2ScriptsEmulator(),
+                new L2jMobiusEmulator()
         };
 
         for (EmulatorAdapter emulator: emulatorList) {
@@ -245,7 +247,26 @@ public class DelayedTasksManager {
                 } else if (command[0].equals("/chars")) {
                     // TODO: command[1] - offset
                     _api.sendMessage(userId, "<pre>" + getChars() + "</pre>");
-                } else {
+                } /*else if (command[0].equals("/kick")) {
+                    if (command.length == 2) {
+                        String text = kick(command[1]);
+                        _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                    } else {
+                        _api.sendMessage(
+                                userId,
+                                command[0],
+                                0,
+                                "html",
+                                null,
+                                true,
+                                false,
+                                false,
+                                0,
+                                true,
+                                new ForceReply(true, "nickname", false)
+                        );
+                    }
+                }*/ else {
                     if (DEBUG) {
                         _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
                     } else
@@ -253,8 +274,8 @@ public class DelayedTasksManager {
                 }
             } catch (Exception e) {
                 _api.sendMessage(userId, "<pre>" + e.getMessage() + "</pre>");
-                e.printStackTrace();
                 if (DEBUG) {
+                    e.printStackTrace();
                     _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
                 }
             }
@@ -262,41 +283,82 @@ public class DelayedTasksManager {
     }
 
     private String addItem(String charName, int itemId, int itemCount) {
-        String text = "Successfully!";
-        String sqlSelect = "SELECT * FROM characters WHERE char_name = ?";
-
-        String sqlInsert;
-        if (_tables.containsKey("items_delayed")) {
-            sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
-        } else if (_tables.containsKey("z_queued_items")) {
-            sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
-        } else if (_tables.containsKey("character_items")) {
-            sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
-        } else {
-            return "Table `items_delayed` and `z_queued_items` not found!";
+        if (!_tables.containsKey("items_delayed")
+                && !_tables.containsKey("z_queued_items")
+                && !_tables.containsKey("character_items")
+                && !_tables.containsKey("items")) {
+            return "Table `items_delayed` and `z_queued_items` and `character_items` and `items` not found!";
         }
 
+        String sqlSelectChar = "SELECT * FROM characters WHERE char_name = ?";
+
         try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement select = connection.prepareStatement(sqlSelect)) {
+             PreparedStatement select = connection.prepareStatement(sqlSelectChar)) {
             select.setString(1, charName);
             try (ResultSet resultSet = select.executeQuery()) {
                 if (resultSet.next()) {
                     int charId = resultSet.getInt(_tables.get("characters").contains("obj_Id") ? "obj_Id" : "charId");
 
-                    try (PreparedStatement insert = connection.prepareStatement(sqlInsert)) {
-                        insert.setInt(1, charId);
-                        insert.setInt(2, itemId);
-                        insert.setInt(3, itemCount);
-                        insert.execute();
+                    if (_tables.containsKey("items_delayed") || _tables.containsKey("z_queued_items") || _tables.containsKey("character_items")) {
+                        String sqlInsert;
+                        if (_tables.containsKey("items_delayed")) {
+                            sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
+                        } else if (_tables.containsKey("z_queued_items")) {
+                            sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
+                        } else {
+                            sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
+                        }
+
+                        try (PreparedStatement insert = connection.prepareStatement(sqlInsert)) {
+                            insert.setInt(1, charId);
+                            insert.setInt(2, itemId);
+                            insert.setInt(3, itemCount);
+                            insert.execute();
+                        }
+                    } else { // TODO: table items! check character on online?
+                        String sqlSelectItem = "SELECT * FROM items WHERE item_id = ? AND owner_id = ?";
+                        try (PreparedStatement selectItem = connection.prepareStatement(sqlSelectItem)) {
+                            selectItem.setInt(1, itemId);
+                            selectItem.setInt(2, charId);
+                            try (ResultSet resultSetItem = selectItem.executeQuery()) {
+                                if (resultSetItem.next()) {
+                                    String sqlUpdateItem = "UPDATE items SET count = count + ? WHERE object_id = ?";
+                                    try (PreparedStatement updateItemStatement = connection.prepareStatement(sqlUpdateItem)) {
+                                        updateItemStatement.setInt(1, itemCount);
+                                        updateItemStatement.setInt(2, resultSetItem.getInt("object_id"));
+                                        updateItemStatement.execute();
+                                    }
+                                } else {
+                                    String sqlSelectMaxObjectId = "SELECT MAX(object_id) FROM items";
+                                    try (PreparedStatement maxObjectIdStatement = connection.prepareStatement(sqlSelectMaxObjectId);
+                                         ResultSet resultMaxObjectId = maxObjectIdStatement.executeQuery()) {
+                                        if (resultMaxObjectId.next()) {
+                                            int maxObjectId = resultMaxObjectId.getInt(1);
+                                            String sqlInsertItem = "INSERT INTO items (object_id, owner_id, item_id, count, enchant_level, loc) VALUES ( ?, ?, ?, ?, 0, 'INVENTORY' )";
+                                            try (PreparedStatement insertItemStatement = connection.prepareStatement(sqlInsertItem)) {
+                                                insertItemStatement.setInt(1, maxObjectId + 1);
+                                                insertItemStatement.setInt(2, charId);
+                                                insertItemStatement.setInt(3, itemId);
+                                                insertItemStatement.setInt(4, itemCount);
+                                                insertItemStatement.execute();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 } else {
-                    text = "Character " + charName + " not found!";
+                    return "Character " + charName + " not found!";
                 }
             }
         } catch (SQLException e) {
-            text = e.getMessage();
+            if (DEBUG)
+                e.printStackTrace();
+            return e.getMessage();
         }
-        return text;
+
+        return "Successfully!";
     }
 
     private String getItemsDelayedStatus() {
@@ -389,24 +451,14 @@ public class DelayedTasksManager {
 
         String text = null;
         try {
-            if (_emulator.getType() == EmulatorType.Rebellion) {
+            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.L2Scripts) {
                 Method method = shutdownObj.getClass().getDeclaredMethod("schedule", int.class, int.class);
                 method.invoke(shutdownObj, seconds, isRestart ? 2 : 0);
-            } /*else if (_emulator == Emulator.MobiusDev) {
-                    //Class<?> player = Class.forName("org.l2jmobius.gameserver.model.actor.Player");
-
-                    //Method method = player.getDeclaredMethod("startShutdown", player, int.class, boolean.class);
-                    for ( Method method1: _shutdownInstance.getClass().getDeclaredMethods() ) {
-                        System.out.println("method: " + method1.getName());
-                        for ( Class<?> type: method1.getParameterTypes())
-                            System.out.println("\ttype: " + type.getName());
-                    }
-
-                    //Method method = _shutdownInstance.getClass().getDeclaredMethod("startShutdown", player, int.class, boolean.class);
-                    //method.invoke(_shutdownInstance, player.newInstance(), seconds, isRestart);
-                } else if (_emulator == Emulator.L2Scripts) {
-
-                }*/ else if (_emulator.getType() == EmulatorType.PwSoft) {
+            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
+                Class<?> classPlayer = Class.forName(_emulator.getBasePackage() + ".gameserver.model.actor.Player");
+                Method method = shutdownObj.getClass().getDeclaredMethod("startShutdown", classPlayer, int.class, boolean.class);
+                method.invoke(shutdownObj, null, seconds, isRestart);
+            } else if (_emulator.getType() == EmulatorType.PwSoft) {
                 Method method = shutdownObj.getClass().getDeclaredMethod("startTelnetShutdown", String.class, int.class, boolean.class);
                 method.invoke(shutdownObj, "127.0.0.1", seconds, isRestart);
             } else if (_emulator.getType() == EmulatorType.Lucera) {
@@ -416,6 +468,9 @@ public class DelayedTasksManager {
                 method.invoke(shutdownObj, "Telegram bot", seconds, isRestart ? enums[2] : enums[1]);
             }
         } catch (Exception e) {
+            if (DEBUG)
+                e.printStackTrace();
+
             text = e.getMessage();
         }
 
@@ -434,26 +489,24 @@ public class DelayedTasksManager {
 
         String text = null;
         try {
-            if (_emulator.getType() == EmulatorType.Rebellion) {
-                Method method = shutdownObj.getClass().getMethod("cancel");
+            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.L2Scripts) {
+                Method method = shutdownObj.getClass().getDeclaredMethod("cancel");
                 method.invoke(shutdownObj);
-            } /*else if (_emulator == Emulator.MobiusDev) {
-                    Class<?> player = _emulator == Emulator.MobiusDev
-                            ? Class.forName("org.l2jmobius.gameserver.model.actor.Player")
-                            : Class.forName("net.sf.l2j.gameserver.model.actor.instance.L2PcInstance");
-
-                    Method method = _shutdownInstance.getClass().getMethod("abort", player);
-                    method.invoke(_shutdownInstance, player);
-                } else if (_emulator == Emulator.L2Scripts) {
-                    //
-                }*/ else if (_emulator.getType() == EmulatorType.PwSoft) {
-                Method method = shutdownObj.getClass().getMethod("telnetAbort", String.class);
+            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
+                Class<?> classPlayer = Class.forName(_emulator.getBasePackage() + ".gameserver.model.actor.Player");
+                Method method = shutdownObj.getClass().getDeclaredMethod("abort", classPlayer);
+                method.invoke(shutdownObj,  new Object[] { null });
+            } else if (_emulator.getType() == EmulatorType.PwSoft) {
+                Method method = shutdownObj.getClass().getDeclaredMethod("telnetAbort", String.class);
                 method.invoke(shutdownObj, "127.0.0.1");
             } else if (_emulator.getType() == EmulatorType.Lucera) {
-                Method method = shutdownObj.getClass().getMethod("abort");
+                Method method = shutdownObj.getClass().getDeclaredMethod("abort");
                 method.invoke(shutdownObj);
             }
         } catch (Exception e) {
+            if (DEBUG)
+                e.printStackTrace();
+
             text = e.getMessage();
         }
 
@@ -472,19 +525,55 @@ public class DelayedTasksManager {
 
         String text = "";
         try {
-            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.Lucera) {
-                Method method = threadPoolObj.getClass().getMethod("getStats");
+            if (_emulator.getType() == EmulatorType.Rebellion
+                    || _emulator.getType() == EmulatorType.Lucera
+                    || _emulator.getType() == EmulatorType.L2Scripts) {
+                Method method = threadPoolObj.getClass().getDeclaredMethod("getStats");
                 text = ((StringBuilder) method.invoke(threadPoolObj)).toString();
             } else if (_emulator.getType() == EmulatorType.PwSoft /*|| _emulator.getType() == EmulatorType.Lucera*/) {
-                Method method = threadPoolObj.getClass().getMethod("getTelemetry");
+                Method method = threadPoolObj.getClass().getDeclaredMethod("getTelemetry");
                 text = (String) method.invoke(threadPoolObj);
+            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
+                Method method = threadPoolObj.getClass().getMethod("getStats");
+                text = String.join("\n", (String[]) method.invoke(threadPoolObj));
+            }
+        } catch (Exception e) {
+            if (DEBUG)
+                e.printStackTrace();
+
+            text = e.getMessage();
+        }
+
+        return text;
+    }
+
+    /*private String kick(String charName) {
+        if (_emulator == null) {
+            return "_emulator == null";
+        }
+
+        String text = null;
+
+        try {
+            if (_emulator.getType() == EmulatorType.PwSoft) {
+                //Class<?> classL2PcInstance = Class.forName(_emulator.getBasePackage() + ".model.actor.instance.L2PcInstance");
+
+                Class<?> classL2World = Class.forName(_emulator.getBasePackage() + ".model.L2World");
+                Method methodInstance = classL2World.getDeclaredMethod("getInstance");
+                Object l2WorldInstance = methodInstance.invoke(null);
+                Method getPlayer = l2WorldInstance.getClass().getDeclaredMethod("getPlayer", String.class);
+
+                System.out.println("player: " + getPlayer.invoke(l2WorldInstance, charName));
+
+                //L2PcInstance player = L2World.getInstance().getPlayer(charName);
+                //player.kick();
             }
         } catch (Exception e) {
             text = e.getMessage();
         }
 
         return text;
-    }
+    }*/
 
     public static void main(String... args) {
         if (args.length == 0) {

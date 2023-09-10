@@ -1,5 +1,7 @@
 package info.mmo_dev.emulators;
 
+import java.lang.reflect.Method;
+
 public class L2ScriptsEmulator implements EmulatorAdapter {
     private static final String _basePackage = "l2s.gameserver";
 
@@ -8,21 +10,21 @@ public class L2ScriptsEmulator implements EmulatorAdapter {
     private Object _threadPoolInstance;
 
     public L2ScriptsEmulator() {
-        /*try {
+        try {
             Class<?> classShutdown = Class.forName(_basePackage + ".Shutdown");
             Method methodInstance = classShutdown.getDeclaredMethod("getInstance");
             _shutdownInstance = methodInstance.invoke(null);
         } catch (Exception e) {
             //
-        }*/
+        }
 
-        /*try {
+        try {
             Class<?> classThreadPool = Class.forName(_basePackage + ".ThreadPoolManager");
             Method methodInstance = classThreadPool.getDeclaredMethod("getInstance");
             _threadPoolInstance = methodInstance.invoke(null);
         } catch (Exception e) {
             //
-        }*/
+        }
     }
 
     @Override

@@ -35,7 +35,7 @@
     <target name="package" depends="compile">
         <jar destfile="${build.dist}/delayed-tasks-manager.jar" basedir="${classes}">
             <manifest>
-                <attribute name="Main-Class" value="${ant.project.name}"/>
+                <attribute name="Main-Class" value="info.mmo_dev.${ant.project.name}"/>
                 <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
                 <attribute name="Built-Date" value="${TODAY}" />
                 <attribute name="Supported-By" value="https://mmo-dev.info"/>
