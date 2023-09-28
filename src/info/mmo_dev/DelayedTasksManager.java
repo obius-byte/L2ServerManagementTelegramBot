@@ -19,15 +19,21 @@ import java.util.stream.Stream;
 
 public class DelayedTasksManager {
 
-    private static boolean DEBUG;
+    public final Gson _json = new GsonBuilder().setPrettyPrinting().create();
 
-    public final Gson _json;
-
-    private EmulatorAdapter _emulator;
+    private AbstractEmulator _emulator;
 
     private RequestApi _api;
 
-    private final Map<String, List<String>> _tables = new HashMap<>();
+    //private boolean isShutdown = false;
+
+    //private boolean isFullShutdown = false;
+
+    private static String[] _arguments;
+
+    private volatile int _lastItemsDelayedId = 0;
+
+    private final ScheduledThreadPoolExecutor _threadPool = new ScheduledThreadPoolExecutor(2);
 
     private static final Map<String, String> _actualMenu = new HashMap<String, String>() {{
         put("add_item", "Выдача предметов");
@@ -38,57 +44,52 @@ public class DelayedTasksManager {
         put("restart", "Рестарт сервера");
         put("shutdown_abort", "Отмена действий /shutdown и /restart");
         put("thread_pool_status", "Текущий статус пула потоков");
-        //put("chars", "");
-        //put("kick", "???");
+        //put("characters_list", "Список персонажей");
+        put("ban_account", "Блокировка аккаунта");
+        put("unban_account", "Разблокировка аккаунта");
+        //put("/ban_character", "Блокировка персонажа");
+        //put("/unban_character", "Разблокировка персонажа");
+        //put("/shutdown_mode", "Режим завершение работы");
+        //put("/start_server", "Запустить сервер");
     }};
 
     private DelayedTasksManager() {
-        _json = new GsonBuilder().setPrettyPrinting().create();
+        /*Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("DelayedTasksManager: ShutdownHook");
+            if (isShutdown) {
+                while (!isFullShutdown) {
 
-        try {
-            Config.initialize();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return;
-        }
-
-        try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement statement1 = connection.prepareStatement("SHOW TABLES");
-             ResultSet resultSet1 = statement1.executeQuery()) {
-            while (resultSet1.next()) {
-                String tableName = resultSet1.getString(1);
-                _tables.put(tableName, new ArrayList<>());
-                try (PreparedStatement statement2 = connection.prepareStatement("SHOW COLUMNS FROM " + tableName);
-                     ResultSet resultSet2 = statement2.executeQuery()) {
-                    while (resultSet2.next()) {
-                        String columnName = resultSet2.getString(1);
-                        _tables.get(tableName).add(columnName);
-                    }
                 }
             }
-        } catch (SQLException e) {
+        }));*/
+
+        try {
+            EmulatorType emulatorType = EmulatorType.valueOf(Config.EMULATOR_TYPE);
+            switch (emulatorType) {
+                case L2jMobius: _emulator = new L2jMobiusEmulator(); break;
+                case L2Scripts: _emulator = new L2ScriptsEmulator(); break;
+                case PwSoft: _emulator = new PwSoftEmulator(); break;
+                case Rebellion: _emulator = new RebellionEmulator(); break;
+                case Lucera: _emulator = new LuceraEmulator(); break;
+                case PainTeam: _emulator = new PainTeamEmulator(); break;
+                case L2jEternity: _emulator = new L2jEternityEmulator(); break;
+                case L2cccp: _emulator = new L2cccpEmulator(); break;
+            }
+        } catch (IllegalArgumentException e) {
             e.printStackTrace();
             return;
         }
 
-        EmulatorAdapter[] emulatorList = new EmulatorAdapter[] {
-                new PwSoftEmulator(),
-                new RebellionEmulator(),
-                new LuceraEmulator(),
-                new L2ScriptsEmulator(),
-                new L2jMobiusEmulator()
-        };
-
-        for (EmulatorAdapter emulator: emulatorList) {
-            if (Package.getPackage(emulator.getBasePackage()) != null) {
-                _emulator = emulator;
-                break;
-            }
-        }
-
-        System.out.println("DelayedTasksManager: Emulator " + (_emulator != null ? "detected[" + _emulator.getType() + "]" : "not detected!"));
+        System.out.println("DelayedTasksManager: Emulator detected[" + _emulator.getType() + "]");
 
         _api = new RequestApi(Config.BOT_TOKEN);
+
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            e.printStackTrace();
+            for (long userId: Config.USER_IDS) {
+                _api.sendMessage(userId, "<pre>" + Utils.getStackTrace(e) + "</pre>");
+            }
+        });
 
         ResponseApi<WebhookInfo> webhookInfo = _api.getWebhookInfo();
         if (!webhookInfo.ok) {
@@ -100,8 +101,7 @@ public class DelayedTasksManager {
             System.out.println("DelayedTasksManager: " + _api.setWebhook().description);
         }
 
-        ScheduledThreadPoolExecutor threadPool = new ScheduledThreadPoolExecutor(1);
-        threadPool.scheduleWithFixedDelay(() -> {
+        _threadPool.scheduleWithFixedDelay(() -> {
             List<String> allowed_updates = new ArrayList<String>() {{
                     add("message");
                     //add("callback_query");
@@ -120,9 +120,93 @@ public class DelayedTasksManager {
                 }
             }
         }, 1, 1, TimeUnit.SECONDS);
+
+        if (Config.DELAYED_ITEMS_LISTENER) {
+            startDelayedItemsListener();
+        }
+    }
+
+    private void startDelayedItemsListener() {
+        String sqlSelect;
+        String sqlLastId;
+        String charIdColumn = DatabaseHelper.getTable("characters").contains("charId") ? "charId" : "obj_Id";
+
+        if (DatabaseHelper.tableExists("items_delayed")) {
+            sqlLastId = "SELECT payment_id FROM items_delayed ORDER BY payment_id DESC LIMIT 1";
+            sqlSelect = "SELECT i.*, c.char_name FROM items_delayed AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") WHERE i.payment_id > ? ORDER BY i.payment_id DESC";
+        } else if (DatabaseHelper.tableExists("z_queued_items")) {
+            sqlLastId = "SELECT id FROM z_queued_items ORDER BY id DESC LIMIT 1";
+            sqlSelect = "SELECT c.char_name, z.id AS payment_id, z.char_id AS owner_id, z.item_id, z.item_count AS count, z.name AS description, z.status AS payment_status FROM z_queued_items AS z LEFT JOIN characters AS c ON (z.char_id = c." + charIdColumn + ") WHERE z.id > ? ORDER BY z.id DESC";
+        } else if (DatabaseHelper.tableExists("character_donate")) {
+            sqlLastId = "SELECT id FROM character_donate ORDER BY id DESC LIMIT 1";
+            sqlSelect = "SELECT c.char_name, cd.id AS payment_id, cd.obj_Id AS owner_id, cd.item_id, cd.count, cd.given AS payment_status FROM character_donate AS cd LEFT JOIN characters AS c ON (cd.obj_Id = c." + charIdColumn + ") WHERE cd.id > ? ORDER BY cd.id DESC";
+        } else if (DatabaseHelper.tableExists("character_items")) {
+            sqlLastId = "SELECT id FROM character_items ORDER BY id DESC LIMIT 1";
+            sqlSelect = "SELECT c.char_name, i.id AS payment_id, i.owner_id, i.item_id, i.count, i.status AS payment_status FROM character_items AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") WHERE i.id > ? ORDER BY i.id DESC";
+        } else {
+            System.out.println("DelayedTasksManager::startDelayedItemsListener: Table `items_delayed` and `z_queued_items` and `character_donate` and `character_items` not found!");
+            return;
+        }
+
+        try (Connection connection = DatabaseHelper.getGameConnection();
+             PreparedStatement select = connection.prepareStatement(sqlLastId);
+             ResultSet resultSet = select.executeQuery()) {
+            if (resultSet.next()) {
+                _lastItemsDelayedId = resultSet.getInt(1);
+            }
+        } catch (SQLException e) {
+            if (Config.DEBUG)
+                e.printStackTrace();
+
+            for (long userId : Config.USER_IDS) {
+                _api.sendMessage(userId, "<pre>" + Utils.getStackTrace(e) + "</pre>");
+            }
+        }
+
+        _threadPool.scheduleWithFixedDelay(() -> {
+            try (Connection connection = DatabaseHelper.getGameConnection();
+                 PreparedStatement select = connection.prepareStatement(sqlSelect)) {
+                select.setInt(1, _lastItemsDelayedId);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    while (resultSet.next()) {
+                        String charName = resultSet.getString("char_name");
+                        if (charName == null) {
+                            charName = String.valueOf(resultSet.getInt("owner_id"));
+                        }
+                        int itemId = resultSet.getInt("item_id");
+
+                        if (Config.DELAYED_ITEMS_LISTENER_EXCLUDE_ITEM_IDS.contains(itemId))
+                            continue;
+
+                        int itemCount = resultSet.getInt("count");
+
+                        _lastItemsDelayedId = resultSet.getInt("payment_id");
+
+                        String text = "<b>New Delayed Items record</b>";
+                        text += "\n\nCharacter: " + charName;
+                        text += "\nItem ID: " + itemId;
+                        text += "\nCount: " + itemCount;
+
+                        for (long userId : Config.USER_IDS) {
+                            _api.sendMessage(userId, "<pre>" + text + "</pre>");
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                if (Config.DEBUG)
+                    e.printStackTrace();
+
+                for (long userId : Config.USER_IDS) {
+                    _api.sendMessage(userId, "<pre>" + Utils.getStackTrace(e) + "</pre>");
+                }
+            }
+        }, 60, Config.DELAYED_ITEMS_LISTENER_DELAY, TimeUnit.SECONDS);
     }
 
     private void handleUpdate(Update update) {
+        if (update == null)
+            return;
+
         long userId;
         int messageId;
         String messageText;
@@ -166,115 +250,117 @@ public class DelayedTasksManager {
             try {
                 String[] command = messageText.split("\\s+");
 
-                if (command[0].equals("/start")) {
-                    BotCommandScopeChat botCommandScopeChat = new BotCommandScopeChat(userId);
-                    ResponseApi<BotCommand[]> response = _api.getMyCommands(botCommandScopeChat, "ru");
-                    List<String> currentBotCommands = Stream.of(response.result)
-                            .flatMap(c -> Stream.of(c.command))
-                            .collect(Collectors.toList());
+                switch (command[0]) {
+                    case "/start": {
+                        BotCommandScopeChat botCommandScopeChat = new BotCommandScopeChat(userId);
+                        ResponseApi<BotCommand[]> response = _api.getMyCommands(botCommandScopeChat, "ru");
+                        List<String> currentBotCommands = Stream.of(response.result)
+                                .flatMap(c -> Stream.of(c.command))
+                                .collect(Collectors.toList());
 
-                    if (_actualMenu.size() == response.result.length) {
-                        for (String cmd: _actualMenu.keySet()) {
-                            if (!currentBotCommands.contains(cmd)) {
-                                _api.deleteMyCommands(botCommandScopeChat, "ru");
+                        if (_actualMenu.size() == response.result.length) {
+                            for (String cmd: _actualMenu.keySet()) {
+                                if (!currentBotCommands.contains(cmd)) {
+                                    _api.deleteMyCommands(botCommandScopeChat, "ru");
 
-                                List<BotCommand> botCommandList = new ArrayList<>();
-                                _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
+                                    List<BotCommand> botCommandList = new ArrayList<>();
+                                    _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
 
-                                _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
-                                break;
+                                    _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
+                                    break;
+                                }
                             }
+                        } else {
+                            _api.deleteMyCommands(botCommandScopeChat, "ru");
+
+                            List<BotCommand> botCommandList = new ArrayList<>();
+                            _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
+
+                            _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
                         }
-                        /*for (BotCommand cmd : response.result) {
-                            if (!_actualMenu.containsKey(cmd.command)) {
-
-                            }
-                        }*/
-                   } else {
-                        _api.deleteMyCommands(botCommandScopeChat, "ru");
-
-                        List<BotCommand> botCommandList = new ArrayList<>();
-                        _actualMenu.forEach((k, v) -> botCommandList.add(new BotCommand(k, v)));
-
-                        _api.setMyCommands(botCommandList, botCommandScopeChat, "ru");
+                        break;
                     }
-                } else if (command[0].equals("/add_item")) {
-                    if (command.length == 4) {
-                        _api.sendMessage(userId, addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
-                    } else {
-                        _api.sendMessage(
-                                userId,
-                                "/add_item",
-                                0,
-                                "html",
-                                null,
-                                true,
-                                false,
-                                false,
-                                0,
-                                true,
-                                new ForceReply(true, "nickName itemId itemCount", false)
-                        );
+                    case "/add_item": {
+                        if (command.length == 4) {
+                            _api.sendMessage(userId, DatabaseHelper.addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
+                        } else {
+                            _api.sendMessage(userId,"/add_item", new ForceReply(true, "nickName itemId itemCount", false)
+                            );
+                        }
+                        break;
                     }
-                } else if (command[0].equals("/online")) {
-                    _api.sendMessage(userId, getOnline());
-                } else if (command[0].equals("/items_delayed_status")) {
-                    _api.sendMessage(userId, "<pre>" + getItemsDelayedStatus() + "</pre>");
-                } else if (command[0].equals("/restart") || command[0].equals("/shutdown")) {
-                    if (command.length == 2) {
-                        String text = executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"));
+                    case "/online": {
+                        _api.sendMessage(userId, DatabaseHelper.getOnline());
+                        break;
+                    }
+                    case "/items_delayed_status": {
+                        _api.sendMessage(userId, "<pre>" + DatabaseHelper.getItemsDelayedStatus() + "</pre>");
+                        break;
+                    }
+                    case "/restart": case "/shutdown": {
+                        if (command.length == 2) {
+                            String text = _emulator.executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"));
+                            _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                        } else {
+                            _api.sendMessage(userId, command[0], new ForceReply(true, "seconds", false));
+                        }
+                        break;
+                    }
+                    case "/shutdown_abort": {
+                        String text = _emulator.executeShutdownAbort();
                         _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
-                    } else {
-                        _api.sendMessage(
-                                userId,
-                                command[0],
-                                0,
-                                "html",
-                                null,
-                                true,
-                                false,
-                                false,
-                                0,
-                                true,
-                                new ForceReply(true, "seconds", false)
-                        );
+                        break;
                     }
-                } else if (command[0].equals("/shutdown_abort")) {
-                    String text = executeShutdownAbort();
-                    _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
-                } else if (command[0].equals("/thread_pool_status")) {
-                    _api.sendMessage(userId, "<pre>" + getThreadPoolStatus() + "</pre>");
-                } else if (command[0].equals("/chars")) {
-                    // TODO: command[1] - offset
-                    _api.sendMessage(userId, "<pre>" + getChars() + "</pre>");
-                } /*else if (command[0].equals("/kick")) {
-                    if (command.length == 2) {
-                        String text = kick(command[1]);
-                        _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
-                    } else {
-                        _api.sendMessage(
-                                userId,
-                                command[0],
-                                0,
-                                "html",
-                                null,
-                                true,
-                                false,
-                                false,
-                                0,
-                                true,
-                                new ForceReply(true, "nickname", false)
-                        );
+                    case "/thread_pool_status": {
+                        _api.sendMessage(userId, "<pre>" + _emulator.getThreadPoolStatus() + "</pre>");
+                        break;
                     }
-                }*/ else {
-                    if (DEBUG) {
-                        _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
-                    } else
-                        _api.sendMessage(userId, "<pre>Unregistered command: [" + messageText + "]</pre>");
+                    /*case "/characters_list": {
+                        // TODO: command[1] - offset, command[2] - limit?
+                        ResponseApi<Message> response = _api.sendMessage(userId, "<pre>" + DatabaseHelper.getCharactersList() + "</pre>");
+
+                        if (!response.ok)
+                            System.out.println("message: " + _json.toJson(response));
+                        break;
+                    }*/
+                    case "/ban_account": case "/unban_account": {
+                        if (command.length == 2) {
+                            String text = _emulator.banAccount(command[1], command[0].equals("/unban_account"));
+                            _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                        } else {
+                            _api.sendMessage(userId, command[0], new ForceReply(true, "account name", false));
+                        }
+                        break;
+                    }
+                    /*case "/ban_character": case "/unban_character": {
+                        if (command.length == 2) {
+                            String text = _emulator.banCharacter(command[1], command[0].equals("/unban_character"));
+                            _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                        } else {
+                            _api.sendMessage(userId, command[0], new ForceReply(true, "character name", false));
+                        }
+                        break;
+                    }
+                    case "/shutdown_mode": {
+                        isFullShutdown = !isFullShutdown;
+                        _api.sendMessage(userId, "<pre>Режим завершение работы: " + ( isFullShutdown ? "сервер и бот" : "только сервер" ) + "</pre>");
+                        break;
+                    }
+                    case "/start_server": {
+                        startServer();
+                        return;
+                    }*/
+                    default: {
+                        if (Config.DEBUG) {
+                            _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
+                        } else {
+                            _api.sendMessage(userId, "<pre>Unregistered command: [" + messageText + "]</pre>");
+                        }
+                    }
                 }
             } catch (Exception e) {
-                _api.sendMessage(userId, "<pre>" + e.getMessage() + "</pre>");
-                if (DEBUG) {
+                _api.sendMessage(userId, "<pre>" + Utils.getStackTrace(e) + "</pre>");
+                if (Config.DEBUG) {
                     e.printStackTrace();
                     _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
                 }
@@ -282,328 +368,43 @@ public class DelayedTasksManager {
         }
     }
 
-    private String addItem(String charName, int itemId, int itemCount) {
-        if (!_tables.containsKey("items_delayed")
-                && !_tables.containsKey("z_queued_items")
-                && !_tables.containsKey("character_items")
-                && !_tables.containsKey("items")) {
-            return "Table `items_delayed` and `z_queued_items` and `character_items` and `items` not found!";
+    private static void startServer() {
+        Class<?> clazz = null;
+
+        try {
+            clazz = Class.forName(_arguments[0]);
+        } catch (ClassNotFoundException e) {
+            //
         }
 
-        String sqlSelectChar = "SELECT * FROM characters WHERE char_name = ?";
-
-        try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement select = connection.prepareStatement(sqlSelectChar)) {
-            select.setString(1, charName);
-            try (ResultSet resultSet = select.executeQuery()) {
-                if (resultSet.next()) {
-                    int charId = resultSet.getInt(_tables.get("characters").contains("obj_Id") ? "obj_Id" : "charId");
-
-                    if (_tables.containsKey("items_delayed") || _tables.containsKey("z_queued_items") || _tables.containsKey("character_items")) {
-                        String sqlInsert;
-                        if (_tables.containsKey("items_delayed")) {
-                            sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
-                        } else if (_tables.containsKey("z_queued_items")) {
-                            sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
-                        } else {
-                            sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
-                        }
-
-                        try (PreparedStatement insert = connection.prepareStatement(sqlInsert)) {
-                            insert.setInt(1, charId);
-                            insert.setInt(2, itemId);
-                            insert.setInt(3, itemCount);
-                            insert.execute();
-                        }
-                    } else { // TODO: table items! check character on online?
-                        String sqlSelectItem = "SELECT * FROM items WHERE item_id = ? AND owner_id = ?";
-                        try (PreparedStatement selectItem = connection.prepareStatement(sqlSelectItem)) {
-                            selectItem.setInt(1, itemId);
-                            selectItem.setInt(2, charId);
-                            try (ResultSet resultSetItem = selectItem.executeQuery()) {
-                                if (resultSetItem.next()) {
-                                    String sqlUpdateItem = "UPDATE items SET count = count + ? WHERE object_id = ?";
-                                    try (PreparedStatement updateItemStatement = connection.prepareStatement(sqlUpdateItem)) {
-                                        updateItemStatement.setInt(1, itemCount);
-                                        updateItemStatement.setInt(2, resultSetItem.getInt("object_id"));
-                                        updateItemStatement.execute();
-                                    }
-                                } else {
-                                    String sqlSelectMaxObjectId = "SELECT MAX(object_id) FROM items";
-                                    try (PreparedStatement maxObjectIdStatement = connection.prepareStatement(sqlSelectMaxObjectId);
-                                         ResultSet resultMaxObjectId = maxObjectIdStatement.executeQuery()) {
-                                        if (resultMaxObjectId.next()) {
-                                            int maxObjectId = resultMaxObjectId.getInt(1);
-                                            String sqlInsertItem = "INSERT INTO items (object_id, owner_id, item_id, count, enchant_level, loc) VALUES ( ?, ?, ?, ?, 0, 'INVENTORY' )";
-                                            try (PreparedStatement insertItemStatement = connection.prepareStatement(sqlInsertItem)) {
-                                                insertItemStatement.setInt(1, maxObjectId + 1);
-                                                insertItemStatement.setInt(2, charId);
-                                                insertItemStatement.setInt(3, itemId);
-                                                insertItemStatement.setInt(4, itemCount);
-                                                insertItemStatement.execute();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    return "Character " + charName + " not found!";
-                }
+        if (clazz == null) {
+            if (!Config.DEBUG) {
+                System.out.println("DelayedTasksManager: Main class not found : " + _arguments[0] + "!");
+                Runtime.getRuntime().exit(0);
             }
-        } catch (SQLException e) {
-            if (DEBUG)
-                e.printStackTrace();
-            return e.getMessage();
-        }
-
-        return "Successfully!";
-    }
-
-    private String getItemsDelayedStatus() {
-        String text = "";
-        String sqlSelect;
-        String tableName;
-        if (_tables.containsKey("items_delayed")) {
-            tableName = "items_delayed";
-            sqlSelect = "SELECT * FROM items_delayed ORDER BY payment_id DESC";
-        } else if (_tables.containsKey("z_queued_items")) {
-            tableName = "z_queued_items";
-            sqlSelect = "SELECT item_id, item_count AS count, name AS description, status AS payment_status FROM z_queued_items ORDER BY id DESC";
-        } else if (_tables.containsKey("character_items")) {
-            tableName = "character_items";
-            sqlSelect = "SELECT item_id, count, status AS payment_status FROM character_items ORDER BY id DESC";
         } else {
-            return "Table `items_delayed` and `z_queued_items` not found!";
-        }
-
-        try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement select = connection.prepareStatement(sqlSelect);
-             ResultSet resultSet = select.executeQuery()) {
-            text = Utils.column("Item Id", true, 10)
-                    + Utils.column("Count", false, 10)
-                    + Utils.column("Description", false, 20)
-                    + Utils.column("Status", false, 8) + "\n";
-            while (resultSet.next()) {
-                text += Utils.column(String.valueOf(resultSet.getInt("item_id")), true, 10);
-                text += Utils.column(String.valueOf(resultSet.getInt("count")), false, 10);
-
-                String description = "";
-                if (!tableName.equals("character_items"))
-                    description = resultSet.getString("description");
-
-                text += Utils.column(description, false, 20);
-                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending", false, 8) + "\n";
-            }
-        } catch (SQLException e) {
-            text = e.getMessage();
-        }
-        return text;
-    }
-
-    private String getOnline() {
-        String text = "";
-        try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement select = connection.prepareStatement("SELECT COUNT(*) FROM characters WHERE online = 1");
-             ResultSet resultSet = select.executeQuery()) {
-            if (resultSet.next()) {
-                text = "Current online: <b>" + resultSet.getInt(1) + "</b>";
-            }
-        } catch (SQLException e) {
-            text = e.getMessage();
-        }
-        return text;
-    }
-
-    // TODO: not impl (limit, offset - pagination)
-    private String getChars() {
-        String text = "";
-        String sql = "SELECT * FROM characters";
-        try (Connection connection = DatabaseConnectionFactory.getGameConnection();
-             PreparedStatement select = connection.prepareStatement(sql);
-             ResultSet resultSet = select.executeQuery()) {
-            text = Utils.column( "Item Id", true, 10 )
-                    + Utils.column("Char name", false, 10)
-                    + Utils.column("Description", false, 40)
-                    + Utils.column("Status", false, 10) + "\n";
-            while (resultSet.next()) {
-                text += Utils.column(String.valueOf(resultSet.getInt("char_name")), true, 10);
-                text += Utils.column(String.valueOf(resultSet.getInt("count")), false, 10);
-                text += Utils.column(resultSet.getString("description"), false, 40);
-                text += Utils.column(resultSet.getBoolean("payment_status") ? "ok" : "pending", false, 10) + "\n";
-            }
-        } catch (SQLException e) {
-            text = e.getMessage();
-        }
-        return text;
-    }
-
-    private String executeShutdownSchedule(int seconds, boolean isRestart) {
-        if (_emulator == null) {
-            return "_emulator == null";
-        }
-
-        Object shutdownObj = _emulator.getShutdownObject();
-        if (shutdownObj == null) {
-            return "shutdownObject == null [" + _emulator.getType() + "]";
-        }
-
-        String text = null;
-        try {
-            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.L2Scripts) {
-                Method method = shutdownObj.getClass().getDeclaredMethod("schedule", int.class, int.class);
-                method.invoke(shutdownObj, seconds, isRestart ? 2 : 0);
-            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
-                Class<?> classPlayer = Class.forName(_emulator.getBasePackage() + ".gameserver.model.actor.Player");
-                Method method = shutdownObj.getClass().getDeclaredMethod("startShutdown", classPlayer, int.class, boolean.class);
-                method.invoke(shutdownObj, null, seconds, isRestart);
-            } else if (_emulator.getType() == EmulatorType.PwSoft) {
-                Method method = shutdownObj.getClass().getDeclaredMethod("startTelnetShutdown", String.class, int.class, boolean.class);
-                method.invoke(shutdownObj, "127.0.0.1", seconds, isRestart);
-            } else if (_emulator.getType() == EmulatorType.Lucera) {
-                Class<?> shutdownModeType = Class.forName(shutdownObj.getClass().getName() + "$ShutdownModeType");
-                Object[] enums = shutdownModeType.getEnumConstants(); // TODO: 0 - SIGTERM, 1 - SHUTDOWN, 2 - RESTART, 3 - ABORT
-                Method method = shutdownObj.getClass().getDeclaredMethod("startShutdown", String.class, int.class, shutdownModeType);
-                method.invoke(shutdownObj, "Telegram bot", seconds, isRestart ? enums[2] : enums[1]);
-            }
-        } catch (Exception e) {
-            if (DEBUG)
-                e.printStackTrace();
-
-            text = e.getMessage();
-        }
-
-        return text;
-    }
-
-    private String executeShutdownAbort() {
-        if (_emulator == null) {
-            return "_emulator == null";
-        }
-
-        Object shutdownObj = _emulator.getShutdownObject();
-        if (shutdownObj == null) {
-            return "shutdownObject == null [" + _emulator.getType() + "]";
-        }
-
-        String text = null;
-        try {
-            if (_emulator.getType() == EmulatorType.Rebellion || _emulator.getType() == EmulatorType.L2Scripts) {
-                Method method = shutdownObj.getClass().getDeclaredMethod("cancel");
-                method.invoke(shutdownObj);
-            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
-                Class<?> classPlayer = Class.forName(_emulator.getBasePackage() + ".gameserver.model.actor.Player");
-                Method method = shutdownObj.getClass().getDeclaredMethod("abort", classPlayer);
-                method.invoke(shutdownObj,  new Object[] { null });
-            } else if (_emulator.getType() == EmulatorType.PwSoft) {
-                Method method = shutdownObj.getClass().getDeclaredMethod("telnetAbort", String.class);
-                method.invoke(shutdownObj, "127.0.0.1");
-            } else if (_emulator.getType() == EmulatorType.Lucera) {
-                Method method = shutdownObj.getClass().getDeclaredMethod("abort");
-                method.invoke(shutdownObj);
-            }
-        } catch (Exception e) {
-            if (DEBUG)
-                e.printStackTrace();
-
-            text = e.getMessage();
-        }
-
-        return text;
-    }
-
-    private String getThreadPoolStatus() {
-        if (_emulator == null) {
-            return "_emulator == null";
-        }
-
-        Object threadPoolObj = _emulator.getThreadPoolObject();
-        if (threadPoolObj == null) {
-            return "threadPoolObject == null [" + _emulator.getType() + "]";
-        }
-
-        String text = "";
-        try {
-            if (_emulator.getType() == EmulatorType.Rebellion
-                    || _emulator.getType() == EmulatorType.Lucera
-                    || _emulator.getType() == EmulatorType.L2Scripts) {
-                Method method = threadPoolObj.getClass().getDeclaredMethod("getStats");
-                text = ((StringBuilder) method.invoke(threadPoolObj)).toString();
-            } else if (_emulator.getType() == EmulatorType.PwSoft /*|| _emulator.getType() == EmulatorType.Lucera*/) {
-                Method method = threadPoolObj.getClass().getDeclaredMethod("getTelemetry");
-                text = (String) method.invoke(threadPoolObj);
-            } else if (_emulator.getType() == EmulatorType.L2jMobius) {
-                Method method = threadPoolObj.getClass().getMethod("getStats");
-                text = String.join("\n", (String[]) method.invoke(threadPoolObj));
-            }
-        } catch (Exception e) {
-            if (DEBUG)
-                e.printStackTrace();
-
-            text = e.getMessage();
-        }
-
-        return text;
-    }
-
-    /*private String kick(String charName) {
-        if (_emulator == null) {
-            return "_emulator == null";
-        }
-
-        String text = null;
-
-        try {
-            if (_emulator.getType() == EmulatorType.PwSoft) {
-                //Class<?> classL2PcInstance = Class.forName(_emulator.getBasePackage() + ".model.actor.instance.L2PcInstance");
-
-                Class<?> classL2World = Class.forName(_emulator.getBasePackage() + ".model.L2World");
-                Method methodInstance = classL2World.getDeclaredMethod("getInstance");
-                Object l2WorldInstance = methodInstance.invoke(null);
-                Method getPlayer = l2WorldInstance.getClass().getDeclaredMethod("getPlayer", String.class);
-
-                System.out.println("player: " + getPlayer.invoke(l2WorldInstance, charName));
-
-                //L2PcInstance player = L2World.getInstance().getPlayer(charName);
-                //player.kick();
-            }
-        } catch (Exception e) {
-            text = e.getMessage();
-        }
-
-        return text;
-    }*/
-
-    public static void main(String... args) {
-        if (args.length == 0) {
-            System.out.println("DelayedTasksManager: Main class not specified!");
-            return;
-        }
-
-        DEBUG = Arrays.asList(args).contains("-debug");
-
-        if (!DEBUG) {
-            Class<?> clazz = null;
-
-            try {
-                clazz = Class.forName(args[0]);
-            } catch (ClassNotFoundException e) {
-                // ignore
-            }
-
-            if (clazz == null) {
-                System.out.println("DelayedTasksManager: Main class not found : " + args[0] + "!");
-                return;
-            }
-
             try {
                 Method main = clazz.getDeclaredMethod("main", String[].class);
-                args = Arrays.copyOfRange(args, 1, args.length);
-                main.invoke(clazz, new Object[]{args});
+                main.invoke(clazz, new Object[]{ Arrays.copyOfRange(_arguments, 1, _arguments.length) });
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    public static void main(String... args) throws Exception {
+        Config.initialize();
+        DatabaseHelper.initialize();
+
+        _arguments = args;
+
+        if (_arguments.length == 0) {
+            if (!Config.DEBUG) {
+                System.out.println("DelayedTasksManager: Main class not specified!");
+                return;
+            }
+        } else {
+            startServer();
         }
 
         new DelayedTasksManager();

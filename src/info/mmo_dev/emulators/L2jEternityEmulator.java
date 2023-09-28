@@ -4,7 +4,6 @@ import info.mmo_dev.Config;
 import info.mmo_dev.DatabaseHelper;
 import info.mmo_dev.Utils;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -12,13 +11,13 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collection;
 
-public class L2jMobiusEmulator extends AbstractEmulator {
+public class L2jEternityEmulator extends AbstractEmulator {
 
-    private static final String _basePackage = "org.l2jmobius";
+    private static final String _basePackage = "l2e.gameserver";
 
-    public L2jMobiusEmulator() {
+    public L2jEternityEmulator() {
         try {
-            Class<?> classShutdown = Class.forName(_basePackage + ".gameserver.Shutdown");
+            Class<?> classShutdown = Class.forName(_basePackage + ".Shutdown");
             Method methodInstance = classShutdown.getDeclaredMethod("getInstance");
 
             setShutdownObject(methodInstance.invoke(null));
@@ -27,18 +26,21 @@ public class L2jMobiusEmulator extends AbstractEmulator {
         }
 
         try {
-            Class<?> classThreadPool = Class.forName(_basePackage + ".commons.threads.ThreadPool");
+            Class<?> classThreadPool = Class.forName(_basePackage + ".ThreadPoolManager");
+            Method methodInstance = classThreadPool.getDeclaredMethod("getInstance");
 
-            setThreadPoolObject(classThreadPool.newInstance());
+            setThreadPoolObject(methodInstance.invoke(null));
         } catch (Exception e) {
             //
         }
 
         try {
-            Class<?> classPlayer = Class.forName(_basePackage + ".gameserver.model.actor.Player");
-            Method restorePlayerMethod = classPlayer.getDeclaredMethod("load", int.class);
+            Class<?> classCharacterDAO = Class.forName(_basePackage + ".data.dao.CharacterDAO");
+            Method characterDAOInstanceMethod = classCharacterDAO.getDeclaredMethod("getInstance");
+            Object characterDAOInstance = characterDAOInstanceMethod.invoke(null);
+            Method restorePlayerMethod = characterDAOInstance.getClass().getDeclaredMethod("restore", int.class);
 
-            setPlayerObject(restorePlayerMethod.invoke(classPlayer, Config.CHAR_ID));
+            setPlayerObject(restorePlayerMethod.invoke(characterDAOInstance, Config.CHAR_ID));
         } catch (Exception e) {
             //
         }
@@ -46,7 +48,7 @@ public class L2jMobiusEmulator extends AbstractEmulator {
 
     @Override
     public EmulatorType getType() {
-        return EmulatorType.L2jMobius;
+        return EmulatorType.L2jEternity;
     }
 
     @Override
@@ -99,28 +101,28 @@ public class L2jMobiusEmulator extends AbstractEmulator {
 
     @Override
     public String getThreadPoolStatus() {
-        Object threadPoolObject = getThreadPoolObject();
+        /*Object threadPoolObject = getThreadPoolObject();
         if (threadPoolObject == null)
             return "threadPoolObject == null [" + getType() + "]";
 
-        String result;
         try {
-            Method method = threadPoolObject.getClass().getDeclaredMethod("getStats");
-            result = String.join("\n", (String[]) method.invoke(threadPoolObject));
+            Method method = threadPoolObject.getClass().getDeclaredMethod("getInfo"); // TODO: wtf!?
+            method.invoke(threadPoolObject);
         } catch (Exception e) {
             if (Config.DEBUG)
                 e.printStackTrace();
 
-            result = Utils.getStackTrace(e);
-        }
-
-        return result;
+            Utils.getStackTrace(e);
+        }*/
+        throw new UnsupportedOperationException("Not implemented [" + getType() + "]");
     }
 
     @Override
     public String banAccount(String accountName, boolean cancel) {
+        String result = null;
+        String sqlSelect = "SELECT login FROM accounts WHERE login = ?";
         try (Connection connection = DatabaseHelper.getAuthConnection();
-             PreparedStatement accountsStatement = connection.prepareStatement("SELECT login FROM accounts WHERE login = ?")) {
+             PreparedStatement accountsStatement = connection.prepareStatement(sqlSelect)) {
             accountsStatement.setString(1, accountName);
             try (ResultSet account = accountsStatement.executeQuery()) {
                 if (!account.next()) {
@@ -134,34 +136,32 @@ public class L2jMobiusEmulator extends AbstractEmulator {
             return Utils.getStackTrace(e);
         }
 
-        String result = null;
         try {
-            Class<?> classLoginServerThread = Class.forName(_basePackage + ".gameserver.LoginServerThread");
-            Method methodLoginServerThreadInstance = classLoginServerThread.getDeclaredMethod("getInstance");
-            Object loginServerThreadInstance = methodLoginServerThreadInstance.invoke(null);
-            Method sendAccessLevel = loginServerThreadInstance.getClass().getDeclaredMethod("sendAccessLevel", String.class, int.class);
-            sendAccessLevel.invoke(loginServerThreadInstance, accountName, cancel ? 0 : -100);
+            Class<?> classAuthServerCommunication = Class.forName(_basePackage + ".network.communication.AuthServerCommunication");
+            Method methodInstance = classAuthServerCommunication.getDeclaredMethod("getInstance");
+            Object authServerCommunicationInstance = methodInstance.invoke(null);
+
+            Object classChangeAccessLevel = Class.forName(_basePackage + ".network.communication.gameserverpackets.ChangeAccessLevel")
+                    .getDeclaredConstructor(new Class<?>[]{String.class, int.class, int.class})
+                    .newInstance(accountName, cancel ? 0 : -100, 0);
+
+            Class<?> classSendablePacket = Class.forName(_basePackage + ".network.communication.SendablePacket");
+
+            Method methodSendPacket = authServerCommunicationInstance.getClass().getDeclaredMethod("sendPacket", classSendablePacket);
+            methodSendPacket.invoke(authServerCommunicationInstance, classChangeAccessLevel);
 
             if (!cancel) {
-                Class<?> classWorld = Class.forName(_basePackage + ".gameserver.model.World");
-                Method methodInstance = classWorld.getDeclaredMethod("getInstance");
-                Object worldInstance = methodInstance.invoke(classWorld);
-                Method methodGetAllPlayers = worldInstance.getClass().getDeclaredMethod("getPlayers");
-                Collection<Object> playerList = (Collection<Object>) methodGetAllPlayers.invoke(worldInstance);
-
-                Class<?> classLeaveWorld = Class.forName(_basePackage + ".gameserver.network.serverpackets.LeaveWorld");
-                Field fieldStaticPacket = classLeaveWorld.getDeclaredField("STATIC_PACKET");
-                Object staticPacket = fieldStaticPacket.get(classLeaveWorld);
-
-                Class<?> classServerPacket = Class.forName(_basePackage + ".gameserver.network.serverpackets.ServerPacket");
+                Class<?> classGameObjectsStorage = Class.forName(_basePackage + ".model.GameObjectsStorage");
+                Method methodGetPlayers = classGameObjectsStorage.getDeclaredMethod("getPlayers");
+                Collection<Object> playerList = (Collection<Object>) methodGetPlayers.invoke(null);
 
                 for (Object target : playerList) {
                     Method methodGetAccountName = target.getClass().getDeclaredMethod("getAccountName");
                     String targetAccountName = (String) methodGetAccountName.invoke(target);
 
                     if (accountName.equals(targetAccountName)) {
-                        Method methodSendPacket = target.getClass().getDeclaredMethod("sendPacket", classServerPacket);
-                        methodSendPacket.invoke(target, staticPacket);
+                        Method methodKick = target.getClass().getDeclaredMethod("kick");
+                        methodKick.invoke(target);
                     }
                 }
             }

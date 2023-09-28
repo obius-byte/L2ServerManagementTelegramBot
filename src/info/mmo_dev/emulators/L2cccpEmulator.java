@@ -4,11 +4,15 @@ import info.mmo_dev.Config;
 
 import java.lang.reflect.Method;
 
-public class L2ScriptsEmulator extends AbstractEmulator {
+public class L2cccpEmulator extends AbstractEmulator {
 
-    private static final String _basePackage = "l2s.gameserver";
+    private String _basePackage;
 
-    public L2ScriptsEmulator() {
+    public L2cccpEmulator() {
+        _basePackage = "l2cccp.gameserver";
+        if (Package.getPackage(_basePackage) == null)
+            _basePackage = "com." + _basePackage;
+
         try {
             Class<?> classShutdown = Class.forName(_basePackage + ".Shutdown");
             Method methodInstance = classShutdown.getDeclaredMethod("getInstance");
@@ -30,7 +34,7 @@ public class L2ScriptsEmulator extends AbstractEmulator {
 
     @Override
     public EmulatorType getType() {
-        return EmulatorType.L2Scripts;
+        return EmulatorType.L2cccp;
     }
 
     @Override
@@ -74,7 +78,7 @@ public class L2ScriptsEmulator extends AbstractEmulator {
 
     @Override
     public String getThreadPoolStatus() {
-        Object threadPoolObject = getShutdownObject();
+        Object threadPoolObject = getThreadPoolObject();
         if (threadPoolObject == null)
             return "threadPoolObject == null [" + getType() + "]";
 

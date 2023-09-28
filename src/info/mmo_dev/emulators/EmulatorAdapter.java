@@ -2,11 +2,15 @@ package info.mmo_dev.emulators;
 
 public interface EmulatorAdapter {
 
-    String getBasePackage();
-
     EmulatorType getType();
 
-    Object getShutdownObject();
+    String executeShutdownSchedule(int seconds, boolean isRestart);
 
-    Object getThreadPoolObject();
+    String executeShutdownAbort();
+
+    String getThreadPoolStatus();
+
+    String banAccount(String accountName, boolean cancel);
+
+    String banCharacter(String characterName, boolean cancel);
 }

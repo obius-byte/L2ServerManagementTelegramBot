@@ -36,8 +36,8 @@
         <jar destfile="${build.dist}/delayed-tasks-manager.jar" basedir="${classes}">
             <manifest>
                 <attribute name="Main-Class" value="info.mmo_dev.${ant.project.name}"/>
-                <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
                 <attribute name="Built-Date" value="${TODAY}" />
+                <attribute name="Built-By" value="Obi (https://t.me/obi_us)"/>
                 <attribute name="Supported-By" value="https://mmo-dev.info"/>
             </manifest>
         </jar>
@@ -45,12 +45,19 @@
 
     <target name="zip" depends="clean, package">
         <copy todir="${build.dist}">
-            <fileset dir="${dist}/libs">
-                <include name="*.jar" />
-                <exclude name="mysql-connector-java-8.0.30.jar" />
+            <fileset dir="${dist}" casesensitive="yes">
+                <include name="**/*.properties" />
+                <include name="**/*.jar" />
+                <exclude name="**/mysql-connector-java-8.0.30.jar" />
+                <exclude name="l2e-gameserver.jar" />
             </fileset>
         </copy>
-        <copy file="${dist}/config/delayed-tasks-manager.properties" tofile="${build.dist}/config/delayed-tasks-manager.properties"/>
+        <!--<copy>
+            <fileset dir="${dist}">
+                <include name="*.properties" />
+            </fileset>
+        </copy>
+        <copy file="/dist/delayed-tasks-manager.properties" tofile="${build.dist}/delayed-tasks-manager.properties"/>-->
         <zip destfile="${build}/delayed-tasks-manager.zip" basedir="${build.dist}" />
     </target>
 

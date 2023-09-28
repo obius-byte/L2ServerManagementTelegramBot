@@ -121,6 +121,22 @@ public class RequestApi {
         );
     }
 
+    public ResponseApi<Message> sendMessage(long chat_id, String text, Object reply_markup) {
+        return sendMessage(
+                chat_id,
+                text,
+                0,
+                "html",
+                null,
+                true,
+                false,
+                false,
+                0,
+                true,
+                reply_markup
+        );
+    }
+
     public ResponseApi<Message> sendMessage(long chat_id, String text, int message_thread_id, String parse_mode,
                                             List<MessageEntity> entities, boolean disable_web_page_preview,
                                             boolean disable_notification, boolean protect_content,

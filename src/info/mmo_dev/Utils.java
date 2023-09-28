@@ -1,5 +1,7 @@
 package info.mmo_dev;
 
+import java.io.*;
+
 public class Utils {
 
     public static String column(String text, boolean first, int length) {
@@ -15,5 +17,15 @@ public class Utils {
                 : "%" + length + "s |";
 
         return String.format(format, text);
+    }
+
+    public static String getStackTrace(final Throwable e) {
+        final StringWriter sw = new StringWriter();
+        e.printStackTrace(new PrintWriter(sw, true));
+
+        return sw.toString()
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;");
     }
 }

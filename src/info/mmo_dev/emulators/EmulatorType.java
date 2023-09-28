@@ -5,5 +5,8 @@ public enum EmulatorType {
     L2Scripts,
     PwSoft,
     Rebellion,
-    Lucera
+    Lucera,
+    PainTeam,
+    L2jEternity,
+    L2cccp
 }
