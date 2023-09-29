@@ -8,5 +8,6 @@ public enum EmulatorType {
     Lucera,
     PainTeam,
     L2jEternity,
-    L2cccp
+    L2cccp,
+    Acis
 }

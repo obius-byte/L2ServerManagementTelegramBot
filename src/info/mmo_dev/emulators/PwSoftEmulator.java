@@ -1,17 +1,14 @@
 package info.mmo_dev.emulators;
 
-import info.mmo_dev.Config;
-import info.mmo_dev.Utils;
-
 import java.lang.reflect.Method;
 
 public class PwSoftEmulator extends AbstractEmulator {
 
-    private static final String _basePackage = "net.sf.l2j.gameserver";
-
     public PwSoftEmulator() {
+        super("net.sf.l2j.gameserver");
+
         try {
-            Class<?> classShutdown = Class.forName(_basePackage + ".Shutdown");
+            Class<?> classShutdown = Class.forName(getBasePackage() + ".Shutdown");
             Method methodInstance = classShutdown.getDeclaredMethod("getInstance");
 
             setShutdownObject(methodInstance.invoke(null));
@@ -20,7 +17,7 @@ public class PwSoftEmulator extends AbstractEmulator {
         }
 
         try {
-            Class<?> classThreadPool = Class.forName(_basePackage + ".ThreadPoolManager");
+            Class<?> classThreadPool = Class.forName(getBasePackage() + ".ThreadPoolManager");
             Method methodInstance = classThreadPool.getDeclaredMethod("getInstance");
 
             setThreadPoolObject(methodInstance.invoke(null));
@@ -32,66 +29,6 @@ public class PwSoftEmulator extends AbstractEmulator {
     @Override
     public EmulatorType getType() {
         return EmulatorType.PwSoft;
-    }
-
-    @Override
-    public String executeShutdownSchedule(int seconds, boolean isRestart) {
-        Object shutdownObject = getShutdownObject();
-        if (shutdownObject == null)
-            return "shutdownObject == null [" + getType() + "]";
-
-        String result = null;
-        try {
-            Method method = shutdownObject.getClass().getDeclaredMethod("startTelnetShutdown", String.class, int.class, boolean.class);
-            method.invoke(shutdownObject, "127.0.0.1", seconds, isRestart);
-        } catch (Exception e) {
-            if (Config.DEBUG)
-                e.printStackTrace();
-
-            result = Utils.getStackTrace(e);
-        }
-
-        return result;
-    }
-
-    @Override
-    public String executeShutdownAbort() {
-        Object shutdownObject = getShutdownObject();
-        if (shutdownObject == null)
-            return "shutdownObject == null [" + getType() + "]";
-
-        String result = null;
-        try {
-            Method method = shutdownObject.getClass().getDeclaredMethod("telnetAbort", String.class);
-            method.invoke(shutdownObject, "127.0.0.1");
-        } catch (Exception e) {
-            if (Config.DEBUG)
-                e.printStackTrace();
-
-            result = Utils.getStackTrace(e);
-        }
-
-        return result;
-    }
-
-    @Override
-    public String getThreadPoolStatus() {
-        Object threadPoolObject = getThreadPoolObject();
-        if (threadPoolObject == null)
-            return "threadPoolObject == null [" + getType() + "]";
-
-        String result;
-        try {
-            Method method = threadPoolObject.getClass().getDeclaredMethod("getTelemetry");
-            result = (String) method.invoke(threadPoolObject);
-        } catch (Exception e) {
-            if (Config.DEBUG)
-                e.printStackTrace();
-
-            result = Utils.getStackTrace(e);
-        }
-
-        return result;
     }
 
     /*@Override

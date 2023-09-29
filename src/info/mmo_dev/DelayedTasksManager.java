@@ -74,6 +74,7 @@ public class DelayedTasksManager {
                 case PainTeam: _emulator = new PainTeamEmulator(); break;
                 case L2jEternity: _emulator = new L2jEternityEmulator(); break;
                 case L2cccp: _emulator = new L2cccpEmulator(); break;
+                case Acis: _emulator = new AcisEmulator(); break;
             }
         } catch (IllegalArgumentException e) {
             e.printStackTrace();
@@ -299,7 +300,7 @@ public class DelayedTasksManager {
                     }
                     case "/restart": case "/shutdown": {
                         if (command.length == 2) {
-                            String text = _emulator.executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"));
+                            String text = _emulator.executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"), false);
                             _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
                         } else {
                             _api.sendMessage(userId, command[0], new ForceReply(true, "seconds", false));
@@ -307,7 +308,7 @@ public class DelayedTasksManager {
                         break;
                     }
                     case "/shutdown_abort": {
-                        String text = _emulator.executeShutdownAbort();
+                        String text = _emulator.executeShutdownSchedule(0, false, true);
                         _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
                         break;
                     }

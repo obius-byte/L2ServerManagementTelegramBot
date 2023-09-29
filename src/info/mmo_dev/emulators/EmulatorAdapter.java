@@ -4,9 +4,7 @@ public interface EmulatorAdapter {
 
     EmulatorType getType();
 
-    String executeShutdownSchedule(int seconds, boolean isRestart);
-
-    String executeShutdownAbort();
+    String executeShutdownSchedule(int seconds, boolean isRestart, boolean cancel);
 
     String getThreadPoolStatus();
 
