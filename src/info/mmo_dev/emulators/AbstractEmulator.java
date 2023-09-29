@@ -264,7 +264,7 @@ public abstract class AbstractEmulator implements EmulatorAdapter {
                     }
                     break;
                 }
-                case Lucera: {
+                case Lucera: case PainTeam: {
                     Class<?> classLoginServerThread = Class.forName(getBasePackage() + ".LoginServerThread");
                     Method methodLoginServerThreadInstance = classLoginServerThread.getDeclaredMethod("getInstance");
                     Object loginServerThreadInstance = methodLoginServerThreadInstance.invoke(null);
@@ -283,33 +283,9 @@ public abstract class AbstractEmulator implements EmulatorAdapter {
                             String targetAccountName = (String) methodGetAccountName.invoke(target);
 
                             if (accountName.equals(targetAccountName)) {
-                                Method methodKick = target.getClass().getDeclaredMethod("logout");
-                                methodKick.invoke(target);
-                            }
-                        }
-                    }
-                    break;
-                }
-                case PainTeam: {
-                    Class<?> classLoginServerThread = Class.forName(getBasePackage() + ".LoginServerThread");
-                    Method methodLoginServerThreadInstance = classLoginServerThread.getDeclaredMethod("getInstance");
-                    Object loginServerThreadInstance = methodLoginServerThreadInstance.invoke(null);
-                    Method sendAccessLevel = loginServerThreadInstance.getClass().getDeclaredMethod("sendAccessLevel", String.class, int.class);
-                    sendAccessLevel.invoke(loginServerThreadInstance, accountName, cancel ? 0 : -100);
-
-                    if (!cancel) {
-                        Class<?> classWorld = Class.forName(getBasePackage() + ".model.L2World");
-                        Method methodInstance = classWorld.getDeclaredMethod("getInstance");
-                        Object worldInstance = methodInstance.invoke(classWorld);
-                        Method methodGetAllPlayers = worldInstance.getClass().getDeclaredMethod("getAllPlayers");
-                        Collection<Object> playerList = (Collection<Object>) methodGetAllPlayers.invoke(worldInstance);
-
-                        for (Object target : playerList) {
-                            Method methodGetAccountName = target.getClass().getDeclaredMethod("getAccountName");
-                            String targetAccountName = (String) methodGetAccountName.invoke(target);
-
-                            if (accountName.equals(targetAccountName)) {
-                                Method methodKick = target.getClass().getDeclaredMethod("kick");
+                                Method methodKick = getType() == EmulatorType.Lucera
+                                        ? target.getClass().getDeclaredMethod("logout")
+                                        : target.getClass().getDeclaredMethod("kick");
                                 methodKick.invoke(target);
                             }
                         }
