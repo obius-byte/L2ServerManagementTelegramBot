@@ -27,10 +27,11 @@ public class RequestApi {
     private <T> ResponseApi<T> request(String method, String postData, final Class<T> clazz) {
         String jsonString;
 
+        HttpURLConnection req = null;
         try {
             URL url = new URL(_baseUrl + method);
+            req = (HttpURLConnection) url.openConnection();
 
-            HttpURLConnection req = (HttpURLConnection) url.openConnection();
             req.setRequestMethod("POST");
             req.setRequestProperty("Content-Type", "application/json");
             req.setRequestProperty("Accept", "application/json");
@@ -48,8 +49,9 @@ public class RequestApi {
 
             req.connect();
 
+            int responseCode = req.getResponseCode();
             StringBuilder str = new StringBuilder();
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(req.getInputStream(), StandardCharsets.UTF_8))) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(responseCode >= 400 ? req.getErrorStream() : req.getInputStream(), StandardCharsets.UTF_8))) {
                 in.lines().forEach(str::append);
             }
 
@@ -57,6 +59,9 @@ public class RequestApi {
         } catch (Exception e) {
             jsonString = "{ok:false,result:false,description: \"" + e.getMessage().replace(_baseUrl, "/") + "\"}";
             //e.printStackTrace();
+        } finally {
+            if (req != null)
+                req.disconnect();
         }
 
         try {

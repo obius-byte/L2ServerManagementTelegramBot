@@ -1,6 +1,7 @@
 package info.mmo_dev.emulators;
 
 import info.mmo_dev.Config;
+import info.mmo_dev.Utils;
 
 import java.lang.reflect.Method;
 
@@ -47,7 +48,7 @@ public class L2ScriptsEmulator extends AbstractEmulator {
             if (Config.DEBUG)
                 e.printStackTrace();
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
         return result;
     }
@@ -66,7 +67,7 @@ public class L2ScriptsEmulator extends AbstractEmulator {
             if (Config.DEBUG)
                 e.printStackTrace();
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
 
         return result;
@@ -87,7 +88,7 @@ public class L2ScriptsEmulator extends AbstractEmulator {
                 e.printStackTrace();
             }
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
 
         return result;

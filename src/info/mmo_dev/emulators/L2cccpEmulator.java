@@ -1,6 +1,7 @@
 package info.mmo_dev.emulators;
 
 import info.mmo_dev.Config;
+import info.mmo_dev.Utils;
 
 import java.lang.reflect.Method;
 
@@ -51,7 +52,7 @@ public class L2cccpEmulator extends AbstractEmulator {
             if (Config.DEBUG)
                 e.printStackTrace();
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
         return result;
     }
@@ -70,7 +71,7 @@ public class L2cccpEmulator extends AbstractEmulator {
             if (Config.DEBUG)
                 e.printStackTrace();
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
 
         return result;
@@ -91,7 +92,7 @@ public class L2cccpEmulator extends AbstractEmulator {
                 e.printStackTrace();
             }
 
-            result = e.getMessage();
+            result = Utils.getStackTrace(e);
         }
 
         return result;
