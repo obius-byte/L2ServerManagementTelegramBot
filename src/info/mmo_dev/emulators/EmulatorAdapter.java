@@ -1,5 +1,7 @@
 package info.mmo_dev.emulators;
 
+import java.sql.SQLException;
+
 public interface EmulatorAdapter {
 
     EmulatorType getType();
@@ -11,4 +13,10 @@ public interface EmulatorAdapter {
     String banAccount(String accountName, boolean cancel);
 
     String banCharacter(String characterName, boolean cancel);
+
+    int getCountOnline() throws SQLException;
+
+    String getItemsDelayedStatus() throws SQLException;
+
+    String addItem(String charName, int itemId, int itemCount) throws SQLException;
 }

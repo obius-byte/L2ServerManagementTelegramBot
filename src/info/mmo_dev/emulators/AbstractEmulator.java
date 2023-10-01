@@ -10,7 +10,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 public abstract class AbstractEmulator implements EmulatorAdapter {
 
@@ -336,5 +339,130 @@ public abstract class AbstractEmulator implements EmulatorAdapter {
     @Override
     public String banCharacter(String characterName, boolean cancel) {
         return "Not implemented [" + getType() + "]";
+    }
+
+    @Override
+    public int getCountOnline() throws SQLException {
+        Map<String, String> entity = DatabaseHelper.getEntity("SELECT COUNT(*) AS count FROM characters WHERE online = 1");
+
+        return entity.size() > 0 ? Integer.parseInt(entity.get("count")) : 0;
+    }
+
+    @Override
+    public String getItemsDelayedStatus() throws SQLException {
+        String sqlSelect;
+        String charIdColumn = DatabaseHelper.getTable("characters").contains("charId") ? "charId" : "obj_Id";
+
+        if (DatabaseHelper.tableExists("items_delayed")) {
+            sqlSelect = "SELECT i.*, c.char_name FROM items_delayed AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") ORDER BY i.payment_id DESC LIMIT 20";
+        } else if (DatabaseHelper.tableExists("z_queued_items")) {
+            sqlSelect = "SELECT c.char_name, z.char_id AS owner_id, z.item_id, z.item_count AS count, z.name AS description, z.status AS payment_status FROM z_queued_items AS z LEFT JOIN characters AS c ON (z.char_id = c." + charIdColumn + ") ORDER BY z.id DESC LIMIT 20";
+        } else if (DatabaseHelper.tableExists("character_donate")) {
+            sqlSelect = "SELECT c.char_name, cd.obj_Id AS owner_id, cd.item_id, cd.count, cd.given AS payment_status FROM character_donate AS cd LEFT JOIN characters AS c ON (cd.obj_Id = c." + charIdColumn + ") ORDER BY cd.id DESC LIMIT 20";
+        } else if (DatabaseHelper.tableExists("character_items")) {
+            sqlSelect = "SELECT c.char_name, i.owner_id, i.item_id, i.count, i.status AS payment_status FROM character_items AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") ORDER BY id DESC LIMIT 20";
+        } else {
+            return "Table `items_delayed` and `z_queued_items` and `character_donate` and `character_items` not found!";
+        }
+
+        String result;
+        List<Map<String, String>> entities = DatabaseHelper.getEntities(sqlSelect);
+        if (entities.size() > 0) {
+            result = Utils.column("Name/Id", true, 16)
+                    + Utils.column("Item", false, 11)
+                    + Utils.column("Count", false, 10)
+                    + Utils.column("Status", false, 8) + "\n";
+            for (Map<String, String> entity: entities) {
+                String charName = entity.get("char_name");
+                if (charName == null)
+                    charName = entity.get("owner_id");
+
+                result += Utils.column(charName, true, 16)
+                        + Utils.column(entity.get("item_id"), false, 11)
+                        + Utils.column(entity.get("count"), false, 10)
+                        + Utils.column(entity.get("payment_status").equals("1") ? "ok" : "pending", false, 8)
+                        + "\n";
+            }
+        } else {
+            result = "empty";
+        }
+
+        return result;
+    }
+
+    @Override
+    public String addItem(String charName, int itemId, int itemCount) throws SQLException {
+        // TODO: character_premium_items???
+        if (!DatabaseHelper.tableExists("items_delayed")
+                && !DatabaseHelper.tableExists("z_queued_items")
+                && !DatabaseHelper.tableExists("character_donate")
+                && !DatabaseHelper.tableExists("character_items")
+                && !DatabaseHelper.tableExists("items")) {
+            return "Table `items_delayed` and `z_queued_items` and `character_donate` and `character_items` and `items` not found!";
+        }
+
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(charName);
+
+        String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+
+        Map<String, String> character = DatabaseHelper.getEntity("SELECT " + charIdColumn + " FROM characters WHERE char_name = ?", parameters);
+        if (character.size() > 0) {
+            int charId = Integer.parseInt(character.get(charIdColumn));
+
+            if (DatabaseHelper.tableExists("items_delayed")
+                    || DatabaseHelper.tableExists("z_queued_items")
+                    || DatabaseHelper.tableExists("character_items")
+                    || DatabaseHelper.tableExists("character_donate")) {
+                String sqlInsert;
+                if (DatabaseHelper.tableExists("items_delayed")) {
+                    sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
+                } else if (DatabaseHelper.tableExists("z_queued_items")) {
+                    sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
+                } else if (DatabaseHelper.tableExists("character_donate")) {
+                    sqlInsert = "INSERT INTO `character_donate` ( `obj_Id`, `char_name`, `item_id`, `count`, `enchant`, `given` ) VALUES ( ?, '', ?, ?, 0, 0 )";
+                } else {
+                    sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
+                }
+
+                parameters.clear();
+                parameters.add(charId);
+                parameters.add(itemId);
+                parameters.add(itemCount);
+
+                DatabaseHelper.executeUpdate(sqlInsert, parameters);
+            } else { // TODO: table items! check character on online?
+                parameters.clear();
+                parameters.add(charId);
+                parameters.add(itemId);
+
+                Map<String, String> item = DatabaseHelper.getEntity("SELECT object_id FROM items WHERE owner_id = ? AND item_id = ?", parameters);
+                if (item.size() > 0) {
+                    parameters.clear();
+                    parameters.add(itemCount);
+                    parameters.add(Integer.parseInt(item.get("object_id")));
+
+                    DatabaseHelper.executeUpdate("UPDATE items SET count = count + ? WHERE object_id = ?", parameters);
+                } else {
+                    Map<String, String> entity = DatabaseHelper.getEntity("SELECT MAX(object_id) AS max_object_id FROM items");
+                    if (entity.size() > 0) {
+                        int maxObjectId = Integer.parseInt(entity.get("max_object_id"));
+
+                        parameters.clear();
+                        parameters.add(maxObjectId + 1);
+                        parameters.add(charId);
+                        parameters.add(itemId);
+                        parameters.add(itemCount);
+                        // TODO: Field 'loc_data' doesn't have a default value?
+
+                        DatabaseHelper.executeUpdate("INSERT INTO items (object_id, owner_id, item_id, count, enchant_level, loc) VALUES ( ?, ?, ?, ?, 0, 'INVENTORY' )", parameters);
+                    }
+                }
+            }
+        } else {
+            return "Character " + charName + " not found!";
+        }
+
+        return "Successfully!";
     }
 }

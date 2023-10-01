@@ -14,7 +14,7 @@ public class Utils {
 
         String format = first
                 ? "| %" + length + "s |"
-                : "%" + length + "s |";
+                : " %-" + length + "s |";
 
         return String.format(format, text);
     }

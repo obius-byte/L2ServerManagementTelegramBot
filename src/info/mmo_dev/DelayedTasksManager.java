@@ -7,9 +7,6 @@ import info.mmo_dev.telegram.bot.api.*;
 import info.mmo_dev.telegram.bot.api.model.*;
 
 import java.lang.reflect.Method;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -44,7 +41,10 @@ public class DelayedTasksManager {
         put("restart", "Рестарт сервера");
         put("shutdown_abort", "Отмена действий /shutdown и /restart");
         put("thread_pool_status", "Текущий статус пула потоков");
-        //put("characters_list", "Список персонажей");
+        put("characters_list", "Список персонажей");
+        put("find_character", "Поиск персонажа");
+        put("character_info", "Информация о персонаже");
+        put("character_inventory", "Инвентарь персонажа");
         put("ban_account", "Блокировка аккаунта");
         put("unban_account", "Разблокировка аккаунта");
         //put("/ban_character", "Блокировка персонажа");
@@ -133,7 +133,7 @@ public class DelayedTasksManager {
         String charIdColumn = DatabaseHelper.getTable("characters").contains("charId") ? "charId" : "obj_Id";
 
         if (DatabaseHelper.tableExists("items_delayed")) {
-            sqlLastId = "SELECT payment_id FROM items_delayed ORDER BY payment_id DESC LIMIT 1";
+            sqlLastId = "SELECT payment_id AS id FROM items_delayed ORDER BY payment_id DESC LIMIT 1";
             sqlSelect = "SELECT i.*, c.char_name FROM items_delayed AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") WHERE i.payment_id > ? ORDER BY i.payment_id DESC";
         } else if (DatabaseHelper.tableExists("z_queued_items")) {
             sqlLastId = "SELECT id FROM z_queued_items ORDER BY id DESC LIMIT 1";
@@ -149,11 +149,10 @@ public class DelayedTasksManager {
             return;
         }
 
-        try (Connection connection = DatabaseHelper.getGameConnection();
-             PreparedStatement select = connection.prepareStatement(sqlLastId);
-             ResultSet resultSet = select.executeQuery()) {
-            if (resultSet.next()) {
-                _lastItemsDelayedId = resultSet.getInt(1);
+        try {
+            Map<String, String> lastEntity = DatabaseHelper.getEntity(sqlLastId);
+            if (lastEntity.size() > 0) {
+                _lastItemsDelayedId = Integer.parseInt(lastEntity.get("id"));
             }
         } catch (SQLException e) {
             if (Config.DEBUG)
@@ -165,35 +164,35 @@ public class DelayedTasksManager {
         }
 
         _threadPool.scheduleWithFixedDelay(() -> {
-            try (Connection connection = DatabaseHelper.getGameConnection();
-                 PreparedStatement select = connection.prepareStatement(sqlSelect)) {
-                select.setInt(1, _lastItemsDelayedId);
-                try (ResultSet resultSet = select.executeQuery()) {
-                    while (resultSet.next()) {
-                        String charName = resultSet.getString("char_name");
-                        if (charName == null) {
-                            charName = String.valueOf(resultSet.getInt("owner_id"));
-                        }
-                        int itemId = resultSet.getInt("item_id");
+            try {
+                List<Object> parameters = new ArrayList<>();
+                parameters.add(_lastItemsDelayedId);
 
-                        if (Config.DELAYED_ITEMS_LISTENER_EXCLUDE_ITEM_IDS.contains(itemId))
-                            continue;
+                List<Map<String, String>> entities = DatabaseHelper.getEntities(sqlSelect, parameters);
+                for (Map<String, String> entity: entities) {
+                    String charName = entity.get("char_name");
+                    if (charName == null) {
+                        charName = entity.get("owner_id");
+                    }
+                    int itemId = Integer.parseInt(entity.get("item_id"));
 
-                        int itemCount = resultSet.getInt("count");
+                    if (Config.DELAYED_ITEMS_LISTENER_EXCLUDE_ITEM_IDS.contains(itemId))
+                        continue;
 
-                        _lastItemsDelayedId = resultSet.getInt("payment_id");
+                    int itemCount = Integer.parseInt(entity.get("count"));
 
-                        String text = "<b>New Delayed Items record</b>";
-                        text += "\n\nCharacter: " + charName;
-                        text += "\nItem ID: " + itemId;
-                        text += "\nCount: " + itemCount;
+                    _lastItemsDelayedId = Integer.parseInt(entity.get("payment_id"));
 
-                        for (long userId : Config.USER_IDS) {
-                            _api.sendMessage(userId, "<pre>" + text + "</pre>");
-                        }
+                    String text = "<b>New Delayed Items record</b>";
+                    text += "\n\nCharacter: " + charName;
+                    text += "\nItem ID: " + itemId;
+                    text += "\nCount: " + itemCount;
+
+                    for (long userId : Config.USER_IDS) {
+                        _api.sendMessage(userId, "<pre>" + text + "</pre>");
                     }
                 }
-            } catch (Exception e) {
+            } catch (SQLException e) {
                 if (Config.DEBUG)
                     e.printStackTrace();
 
@@ -221,12 +220,17 @@ public class DelayedTasksManager {
             }
 
             messageText += update.message.text;
-        } /*else if (update.callback_query != null) {
+        } else if (update.callback_query != null) {
             userId = update.callback_query.from.id;
             messageId = update.callback_query.message.message_id;
             messageText = update.callback_query.data;
-        }*/ else {
-            System.out.println("userId not found! update: " + _json.toJson(update));
+        } else if (update.edited_message != null) {
+            //userId = update.edited_message.from.id;
+            //messageId = update.edited_message.message_id;
+            //messageText = update.edited_message.text;
+            return;
+        } else {
+            System.out.println("userId not found!\nupdate: " + _json.toJson(update));
             return;
         }
 
@@ -250,6 +254,8 @@ public class DelayedTasksManager {
         if (messageText.length() > 0) {
             try {
                 String[] command = messageText.split("\\s+");
+
+                ResponseApi<Message> responseApi = null;
 
                 switch (command[0]) {
                     case "/start": {
@@ -283,53 +289,303 @@ public class DelayedTasksManager {
                     }
                     case "/add_item": {
                         if (command.length == 4) {
-                            _api.sendMessage(userId, DatabaseHelper.addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
+                            responseApi = _api.sendMessage(userId, _emulator.addItem(command[1], Integer.parseInt(command[2]), Integer.parseInt(command[3])));
                         } else {
-                            _api.sendMessage(userId,"/add_item", new ForceReply(true, "nickName itemId itemCount", false)
-                            );
+                            responseApi = _api.sendMessage(userId,"/add_item", new ForceReply(true, "nickName itemId itemCount", false));
                         }
                         break;
                     }
                     case "/online": {
-                        _api.sendMessage(userId, DatabaseHelper.getOnline());
+                        responseApi = _api.sendMessage(userId, String.format("Current online: <b>%s</b>", _emulator.getCountOnline()));
                         break;
                     }
                     case "/items_delayed_status": {
-                        _api.sendMessage(userId, "<pre>" + DatabaseHelper.getItemsDelayedStatus() + "</pre>");
+                        responseApi = _api.sendMessage(userId, "<pre>" + _emulator.getItemsDelayedStatus() + "</pre>");
                         break;
                     }
                     case "/restart": case "/shutdown": {
                         if (command.length == 2) {
                             String text = _emulator.executeShutdownSchedule(Integer.parseInt(command[1]), command[0].equals("/restart"), false);
-                            _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                            responseApi = _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
                         } else {
-                            _api.sendMessage(userId, command[0], new ForceReply(true, "seconds", false));
+                            responseApi = _api.sendMessage(userId, command[0], new ForceReply(true, "seconds", false));
                         }
                         break;
                     }
                     case "/shutdown_abort": {
                         String text = _emulator.executeShutdownSchedule(0, false, true);
-                        _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                        responseApi = _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
                         break;
                     }
                     case "/thread_pool_status": {
-                        _api.sendMessage(userId, "<pre>" + _emulator.getThreadPoolStatus() + "</pre>");
+                        responseApi = _api.sendMessage(userId, "<pre>" + _emulator.getThreadPoolStatus() + "</pre>");
                         break;
                     }
-                    /*case "/characters_list": {
-                        // TODO: command[1] - offset, command[2] - limit?
-                        ResponseApi<Message> response = _api.sendMessage(userId, "<pre>" + DatabaseHelper.getCharactersList() + "</pre>");
+                    case "/characters_list": {
+                        String result = "<b>Characters List</b>\n";
+                        int currentPage = command.length == 2 ? Integer.parseInt(command[1]) : 1;
 
-                        if (!response.ok)
-                            System.out.println("message: " + _json.toJson(response));
+                        InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
+                        Map<String, String> entity = DatabaseHelper.getEntity("SELECT COUNT(*) AS count FROM characters");
+                        if (entity.size() > 0) {
+                            int total = Integer.parseInt(entity.get("count"));
+                            if (total > 0) {
+                                int limit = 50;
+                                int offset = limit * (currentPage - 1);
+
+                                String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+                                List<Object> parameters = new ArrayList<>();
+                                parameters.add(limit);
+                                parameters.add(offset);
+
+                                List<Map<String, String>> characterList = DatabaseHelper.getEntities("SELECT char_name FROM characters ORDER BY " + charIdColumn + " LIMIT ? OFFSET ?", parameters);
+                                int i = 0;
+                                int rowIndex = 0;
+                                List<InlineKeyboardButton> buttonList;
+                                InlineKeyboardButton button;
+                                for (Map<String, String> character: characterList) {
+                                    String charName = character.get("char_name");
+                                    button = new InlineKeyboardButton(charName, "/character_info " + charName);
+                                    if (i++ % 2 == 0) {
+                                        buttonList = new ArrayList<>();
+                                        buttonList.add(button);
+                                        replyMarkup.addRow(rowIndex, buttonList);
+                                    } else {
+                                        replyMarkup.addCol(rowIndex++, button);
+                                    }
+                                }
+
+                                if (currentPage > 1) {
+                                    buttonList = new ArrayList<>();
+                                    buttonList.add(new InlineKeyboardButton("<<< PREV", "/characters_list " + (currentPage - 1)));
+                                    replyMarkup.addRow(buttonList);
+                                }
+
+                                if (total > limit) {
+                                    int numberOfPages = (int) Math.ceil((double) total / limit);
+
+                                    if (currentPage < numberOfPages) {
+                                        buttonList = new ArrayList<>();
+                                        buttonList.add(new InlineKeyboardButton("NEXT >>>", "/characters_list " + (currentPage + 1)));
+                                        replyMarkup.addRow(buttonList);
+                                    }
+                                }
+                            } else {
+                                result = "empty";
+                            }
+                        }
+
+                        responseApi = _api.sendMessage(
+                                userId,
+                                result,
+                                0,
+                                "html",
+                                null,
+                                true,
+                                false,
+                                false,
+                                0,
+                                true,
+                                replyMarkup
+                        );
+                        break;
+                    }
+                    case "/find_character": {
+                        if (command.length == 2) {
+                            String query = command[1];
+                            List<Object> parameters = new ArrayList<>();
+                            parameters.add(query);
+
+                            List<Map<String, String>> entities = DatabaseHelper.getEntities("SELECT char_name FROM characters WHERE char_name LIKE CONCAT( '%',?,'%')", parameters);
+                            int i = 0;
+                            int rowIndex = 0;
+                            List<InlineKeyboardButton> buttonList;
+                            InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
+                            for (Map<String, String> entity: entities) {
+                                String charName = entity.get("char_name");
+                                InlineKeyboardButton button = new InlineKeyboardButton(charName, "/character_info " + charName);
+                                if (i++ % 2 == 0) {
+                                    buttonList = new ArrayList<>();
+                                    buttonList.add(button);
+                                    replyMarkup.addRow(rowIndex, buttonList);
+                                } else {
+                                    replyMarkup.addCol(rowIndex++, button);
+                                }
+                            }
+
+                            responseApi = _api.sendMessage(
+                                    userId,
+                                    "Found characters: " + entities.size(),
+                                    0,
+                                    "html",
+                                    null,
+                                    true,
+                                    false,
+                                    false,
+                                    0,
+                                    true,
+                                    replyMarkup
+                            );
+                            break;
+                        } else {
+                            responseApi = _api.sendMessage(userId, command[0], new ForceReply(true, "Enter the character name", false));
+                        }
+                        break;
+                    }
+                    case "/character_info": {
+                        if (command.length == 2) {
+                            String query = command[1];
+                            //String charName = command[1];
+                            //int charId = charName.matches("\\d*") ? Integer.parseInt(charName) : -1;
+                            String result = "Character information:\n";
+                            InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
+                            String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+
+                            List<Object> parameters = new ArrayList<>();
+                            parameters.add(query);
+                            parameters.add(query);
+
+                            Map<String, String> character = DatabaseHelper.getEntity("SELECT * FROM characters WHERE char_name = ? OR " + charIdColumn + " = ?", parameters);
+                            if (character.size() > 0) {
+                                result += Utils.column("key", true, 20)
+                                        + Utils.column("value", false, 20)+ "\n";
+                                for (Map.Entry<String, String> entry: character.entrySet()) {
+                                    String value = entry.getValue();
+                                    result += Utils.column(entry.getKey(), true, 20)
+                                            + Utils.column(value != null ? value : "null", false, 20)+ "\n";
+                                }
+
+                                List<InlineKeyboardButton> buttonList = new ArrayList<>();
+                                buttonList.add(new InlineKeyboardButton("Inventory", "/character_inventory " + character.get(charIdColumn)));
+
+                                replyMarkup.addRow(buttonList);
+                            } else {
+                                result = "Character '" + query + "' not found!";
+                            }
+
+                            responseApi = _api.sendMessage(
+                                    userId,
+                                    "<pre>" + result + "</pre>",
+                                    0,
+                                    "html",
+                                    null,
+                                    true,
+                                    false,
+                                    false,
+                                    0,
+                                    true,
+                                    replyMarkup
+                            );
+                        } else {
+                            responseApi = _api.sendMessage(userId, command[0], new ForceReply(true, "Enter the character name or his ID", false));
+                        }
+                        break;
+                    }
+                    case "/character_inventory": {
+                        if (command.length > 1) {
+                            int currentPage = command.length > 2 ? Integer.parseInt(command[2]) : 1;
+
+                            String result;
+                            InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
+                            String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+                            List<Object> parameters = new ArrayList<>();
+                            parameters.add(command[1]);
+                            parameters.add(command[1]);
+
+                            Map<String, String> character = DatabaseHelper.getEntity("SELECT char_name, " + charIdColumn + " FROM characters WHERE char_name = ? OR " + charIdColumn + " = ?", parameters);
+                            if (character.size() > 0) {
+                                String charName = character.get("char_name");
+                                int charId = Integer.parseInt(character.get(charIdColumn));
+
+                                result = "<b>Character Inventory: " + charName + " (" + charId + ")</b>\n";
+
+                                parameters.clear();
+                                parameters.add(charId);
+
+                                Map<String, String> entity = DatabaseHelper.getEntity("SELECT COUNT(*) AS count FROM items WHERE owner_id = ?", parameters);
+                                if (entity.size() > 0) {
+                                    int total = Integer.parseInt(entity.get("count"));
+                                    int limit = 90;
+                                    int offset = limit * (currentPage - 1);
+
+                                    parameters.clear();
+                                    parameters.add(charId);
+                                    parameters.add(limit);
+                                    parameters.add(offset);
+
+                                    List<Map<String, String>> items = DatabaseHelper.getEntities("SELECT * FROM items WHERE owner_id = ? ORDER BY count DESC LIMIT ? OFFSET ?", parameters);
+                                    int i = 0;
+                                    int rowIndex = 0;
+                                    List<InlineKeyboardButton> buttonList;
+                                    for (Map<String, String> item: items) {
+                                        String itemId = item.get("item_id");
+                                        //int count = Integer.parseInt(item.get("count"));
+
+                                        InlineKeyboardButton btn = new InlineKeyboardButton(
+                                                item.get("item_id") + " (" + item.get("count") + ") / " + item.get("loc"),
+                                                "/character_inventory_delete_item " + charId + " " + itemId
+                                        );
+
+                                        if (i++ % 2 == 0) {
+                                            buttonList = new ArrayList<>();
+                                            buttonList.add(btn);
+                                            replyMarkup.addRow(rowIndex, buttonList);
+                                        } else {
+                                            replyMarkup.addCol(rowIndex++, btn);
+                                        }
+                                    }
+
+                                    if (currentPage > 1) {
+                                        buttonList = new ArrayList<>();
+                                        buttonList.add(new InlineKeyboardButton("<<< PREV", "/character_inventory " + charId + " " + (currentPage - 1)));
+                                        replyMarkup.addRow(buttonList);
+                                    }
+
+                                    if (total > limit) {
+                                        int numberOfPages = (int) Math.ceil((double) total / limit);
+
+                                        if (currentPage < numberOfPages) {
+                                            buttonList = new ArrayList<>();
+                                            buttonList.add(new InlineKeyboardButton("NEXT >>>", "/character_inventory " + charId + " " + (currentPage + 1)));
+                                            replyMarkup.addRow(buttonList);
+                                        }
+                                    }
+                                } else {
+                                    result += "empty";
+                                }
+                            } else {
+                                result = "Character " + command[1] + " not found!";
+                            }
+
+                            responseApi = _api.sendMessage(
+                                    userId,
+                                    "<pre>" + result + "</pre>",
+                                    0,
+                                    "html",
+                                    null,
+                                    true,
+                                    false,
+                                    false,
+                                    0,
+                                    true,
+                                    replyMarkup
+                            );
+                        } else {
+                            responseApi = _api.sendMessage(userId, command[0], new ForceReply(true, "Enter the character name or his ID", false));
+                        }
+                        break;
+                    }
+                    /*case "/character_inventory_delete_item": {
+
+
                         break;
                     }*/
                     case "/ban_account": case "/unban_account": {
                         if (command.length == 2) {
                             String text = _emulator.banAccount(command[1], command[0].equals("/unban_account"));
-                            _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
+                            responseApi = _api.sendMessage(userId, "<pre>" + ( text == null ? "Successfully!" : text ) + "</pre>");
                         } else {
-                            _api.sendMessage(userId, command[0], new ForceReply(true, "account name", false));
+                            responseApi = _api.sendMessage(userId, command[0], new ForceReply(true, "account name", false));
                         }
                         break;
                     }
@@ -352,12 +608,16 @@ public class DelayedTasksManager {
                         return;
                     }*/
                     default: {
-                        if (Config.DEBUG) {
-                            _api.sendMessage(userId, "<pre>update:\n" + _json.toJson(update) + "</pre>");
-                        } else {
-                            _api.sendMessage(userId, "<pre>Unregistered command: [" + messageText + "]</pre>");
+                        if (update.callback_query != null && update.callback_query.message != null) {
+                            update.callback_query.message = null;
                         }
+                        String text = "<pre>Unregistered command: [" + messageText + "]" + (Config.DEBUG ? "\nupdate:\n" + _json.toJson(update) : "") + "</pre>";
+                        responseApi = _api.sendMessage(userId,text);
                     }
+                }
+
+                if (responseApi != null && !responseApi.ok) {
+                    _api.sendMessage(userId, "<pre>" + _json.toJson(responseApi) + "</pre>");
                 }
             } catch (Exception e) {
                 _api.sendMessage(userId, "<pre>" + Utils.getStackTrace(e) + "</pre>");
