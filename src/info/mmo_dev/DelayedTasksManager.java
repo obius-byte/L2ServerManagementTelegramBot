@@ -81,7 +81,7 @@ public class DelayedTasksManager {
             return;
         }
 
-        System.out.println("DelayedTasksManager: Emulator detected[" + _emulator.getType() + "]");
+        System.out.println("DelayedTasksManager: Emulator selected [" + _emulator.getType() + "]");
 
         _api = new RequestApi(Config.BOT_TOKEN);
 
@@ -103,14 +103,14 @@ public class DelayedTasksManager {
         }
 
         _threadPool.scheduleWithFixedDelay(() -> {
-            List<String> allowed_updates = new ArrayList<String>() {{
-                    add("message");
-                    //add("callback_query");
-                }};
-            ResponseApi<Update[]> response = _api.getUpdates(10, 0, allowed_updates);
+            List<String> allowedUpdates = new ArrayList<>();
+            //allowedUpdates.add("message");
+            //allowedUpdates.add("callback_query");
+
+            ResponseApi<Update[]> response = _api.getUpdates(10, 0, allowedUpdates);
 
             if (!response.ok) {
-                System.out.println("DelayedTasksManager: " + response.description);
+                System.out.println("DelayedTasksManager: getUpdates: " + response.description);
                 return;
             }
 

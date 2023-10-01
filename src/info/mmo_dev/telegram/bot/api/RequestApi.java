@@ -1,7 +1,8 @@
 package info.mmo_dev.telegram.bot.api;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException;
+import info.mmo_dev.Config;
+import info.mmo_dev.Utils;
 import info.mmo_dev.telegram.bot.api.model.*;
 
 import java.io.*;
@@ -24,51 +25,50 @@ public class RequestApi {
         _baseUrl = "https://api.telegram.org/bot" + token + "/";
     }
 
-    private <T> ResponseApi<T> request(String method, String postData, final Class<T> clazz) {
-        String jsonString;
-
-        HttpURLConnection req = null;
+    private <T> ResponseApi<T> getResponse(String method, String postData, final Class<T> clazz) {
+        ResponseApi<T> response;
+        HttpURLConnection request = null;
         try {
             URL url = new URL(_baseUrl + method);
-            req = (HttpURLConnection) url.openConnection();
+            request = (HttpURLConnection) url.openConnection();
 
-            req.setRequestMethod("POST");
-            req.setRequestProperty("Content-Type", "application/json");
-            req.setRequestProperty("Accept", "application/json");
-            req.setDoInput(true);
-            req.setUseCaches(false);
+            request.setRequestMethod("POST");
+            request.setRequestProperty("Content-Type", "application/json");
+            request.setRequestProperty("Accept", "application/json");
+            request.setDoInput(true);
+            request.setUseCaches(false);
 
             if (postData != null) {
-                req.setDoOutput(true);
+                request.setDoOutput(true);
 
-                try (OutputStream os = req.getOutputStream()) {
+                try (OutputStream os = request.getOutputStream()) {
                     byte[] input = postData.getBytes(StandardCharsets.UTF_8);
                     os.write(input, 0, input.length);
                 }
             }
 
-            req.connect();
+            request.connect();
 
-            int responseCode = req.getResponseCode();
+            int responseCode = request.getResponseCode();
             StringBuilder str = new StringBuilder();
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(responseCode >= 400 ? req.getErrorStream() : req.getInputStream(), StandardCharsets.UTF_8))) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(responseCode >= 400 ? request.getErrorStream() : request.getInputStream(), StandardCharsets.UTF_8))) {
                 in.lines().forEach(str::append);
             }
 
-            jsonString = str.toString();
+            response = _gson.fromJson(str.toString(), getResponseType(clazz));
         } catch (Exception e) {
-            jsonString = "{ok:false,result:false,description: \"" + e.getMessage().replace(_baseUrl, "/") + "\"}";
-            //e.printStackTrace();
+            if (Config.DEBUG)
+                e.printStackTrace();
+
+            response = new ResponseApi<>();
+            response.ok = false;
+            response.description = Utils.getStackTrace(e);
         } finally {
-            if (req != null)
-                req.disconnect();
+            if (request != null)
+                request.disconnect();
         }
 
-        try {
-            return _gson.fromJson(jsonString, getResponseType(clazz));
-        } catch (JsonSyntaxException e) {
-            return _gson.fromJson(jsonString, getResponseType(Boolean.class));
-        }
+        return response;
     }
 
     private Type getResponseType(Class<?> parameter) {
@@ -91,7 +91,7 @@ public class RequestApi {
     }
 
     public ResponseApi<WebhookInfo> getWebhookInfo() {
-        return request("getWebhookInfo", null, WebhookInfo.class);
+        return getResponse("getWebhookInfo", null, WebhookInfo.class);
     }
 
     public ResponseApi<Boolean> setWebhook(/*String url, InputFile certificate, String ip_address, int max_connections,
@@ -106,7 +106,7 @@ public class RequestApi {
         //parameters.put("drop_pending_updates", drop_pending_updates);
         //parameters.put("secret_token", secret_token);
 
-        return request("setWebhook", _gson.toJson(parameters), Boolean.class);
+        return getResponse("setWebhook", _gson.toJson(parameters), Boolean.class);
     }
 
     // TODO: Only required fields
@@ -161,7 +161,7 @@ public class RequestApi {
         parameters.put("allow_sending_without_reply", allow_sending_without_reply);
         parameters.put("reply_markup", reply_markup);
 
-        return request("sendMessage", _gson.toJson(parameters), Message.class);
+        return getResponse("sendMessage", _gson.toJson(parameters), Message.class);
     }
 
     public ResponseApi<Update[]> getUpdates(int limit, int timeout, List<String> allowed_updates) {
@@ -172,7 +172,7 @@ public class RequestApi {
         parameters.put("timeout", timeout);
         parameters.put("allowed_updates", allowed_updates);
 
-        ResponseApi<Update[]> response = request("getUpdates", _gson.toJson(parameters), Update[].class);
+        ResponseApi<Update[]> response = getResponse("getUpdates", _gson.toJson(parameters), Update[].class);
 
         if (response.ok) {
             int updatesCount = response.result.length;
@@ -190,7 +190,7 @@ public class RequestApi {
         parameters.put("scope", scope);
         parameters.put("language_code", language_code);
 
-        return request("getMyCommands", _gson.toJson(parameters), BotCommand[].class);
+        return getResponse("getMyCommands", _gson.toJson(parameters), BotCommand[].class);
     }
 
     public ResponseApi<Boolean> setMyCommands(List<BotCommand> commands, BotCommandScope scope, String language_code) {
@@ -200,7 +200,7 @@ public class RequestApi {
         parameters.put("scope", scope);
         parameters.put("language_code", language_code);
 
-        return request("setMyCommands", _gson.toJson(parameters), Boolean.class);
+        return getResponse("setMyCommands", _gson.toJson(parameters), Boolean.class);
     }
 
     public ResponseApi<Boolean> deleteMyCommands(BotCommandScope scope, String language_code) {
@@ -209,6 +209,6 @@ public class RequestApi {
         parameters.put("scope", scope);
         parameters.put("language_code", language_code);
 
-        return request("deleteMyCommands", _gson.toJson(parameters), Boolean.class);
+        return getResponse("deleteMyCommands", _gson.toJson(parameters), Boolean.class);
     }
 }

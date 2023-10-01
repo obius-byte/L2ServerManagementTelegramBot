@@ -6,7 +6,7 @@ import java.util.List;
  * @see <a href="https://core.telegram.org/bots/api#chat">Chat</a>
  */
 public class Chat {
-    public int id;
+    public long id;
 
     public String type;
 
