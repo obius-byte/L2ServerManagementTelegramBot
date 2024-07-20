@@ -351,7 +351,7 @@ public abstract class AbstractEmulator implements EmulatorAdapter {
     @Override
     public String getItemsDelayedStatus() throws SQLException {
         String sqlSelect;
-        String charIdColumn = DatabaseHelper.getTable("characters").contains("charId") ? "charId" : "obj_Id";
+        String charIdColumn = DatabaseHelper.getTable("characters").columnExists("charId") ? "charId" : "obj_Id";
 
         if (DatabaseHelper.tableExists("items_delayed")) {
             sqlSelect = "SELECT i.*, c.char_name FROM items_delayed AS i LEFT JOIN characters AS c ON (i.owner_id = c." + charIdColumn + ") ORDER BY i.payment_id DESC LIMIT 20";
@@ -404,33 +404,42 @@ public abstract class AbstractEmulator implements EmulatorAdapter {
         List<Object> parameters = new ArrayList<>();
         parameters.add(charName);
 
-        String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+        String charIdColumn = DatabaseHelper.getTable("characters").columnExists("obj_Id") ? "obj_Id" : "charId";
 
         Map<String, String> character = DatabaseHelper.getEntity("SELECT " + charIdColumn + " FROM characters WHERE char_name = ?", parameters);
         if (character.size() > 0) {
             int charId = Integer.parseInt(character.get(charIdColumn));
 
-            if (DatabaseHelper.tableExists("items_delayed")
-                    || DatabaseHelper.tableExists("z_queued_items")
-                    || DatabaseHelper.tableExists("character_items")
-                    || DatabaseHelper.tableExists("character_donate")) {
-                String sqlInsert;
-                if (DatabaseHelper.tableExists("items_delayed")) {
-                    sqlInsert = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
-                } else if (DatabaseHelper.tableExists("z_queued_items")) {
-                    sqlInsert = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
-                } else if (DatabaseHelper.tableExists("character_donate")) {
-                    sqlInsert = "INSERT INTO `character_donate` ( `obj_Id`, `char_name`, `item_id`, `count`, `enchant`, `given` ) VALUES ( ?, '', ?, ?, 0, 0 )";
+            DatabaseHelper.SQLTableStruct itemsDelayedTable = DatabaseHelper.getTable("items_delayed");
+            DatabaseHelper.SQLTableStruct zQueuedItemsTable = DatabaseHelper.getTable("z_queued_items");
+            DatabaseHelper.SQLTableStruct characterItemsTable = DatabaseHelper.getTable("character_items");
+            DatabaseHelper.SQLTableStruct characterDonateTable = DatabaseHelper.getTable("character_donate");
+
+            if (itemsDelayedTable != null || zQueuedItemsTable != null || characterItemsTable != null || characterDonateTable != null) {
+                String sql;
+                parameters.clear();
+
+                if (itemsDelayedTable != null) {
+                    DatabaseHelper.SQLColumnStruct paymentIdColumn = itemsDelayedTable.getColumn("payment_id");
+                    if (paymentIdColumn != null && !paymentIdColumn.getExtra().contains("auto_increment")) {
+                        parameters.add(System.currentTimeMillis() / 1000);
+                        sql = "INSERT INTO `items_delayed` ( `payment_id`, `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, ?, 0, 'Telegram Bot' )";
+                    } else {
+                        sql = "INSERT INTO `items_delayed` ( `owner_id`, `item_id`, `count`, `payment_status`, `description` ) VALUES ( ?, ?, ?, 0, 'Telegram Bot' )";
+                    }
+                } else if (zQueuedItemsTable != null) {
+                    sql = "INSERT INTO `z_queued_items` ( `char_id`, `name`, `item_id`, `item_count`, `status` ) VALUES ( ?, 'Telegram Bot', ?, ?, 0 )";
+                } else if (characterDonateTable != null) {
+                    sql = "INSERT INTO `character_donate` ( `obj_Id`, `char_name`, `item_id`, `count`, `enchant`, `given` ) VALUES ( ?, '', ?, ?, 0, 0 )";
                 } else {
-                    sqlInsert = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
+                    sql = "INSERT INTO `character_items` ( `owner_id`, `item_id`, `count`, `status` ) VALUES ( ?, ?, ?, 0 )";
                 }
 
-                parameters.clear();
                 parameters.add(charId);
                 parameters.add(itemId);
                 parameters.add(itemCount);
 
-                DatabaseHelper.executeUpdate(sqlInsert, parameters);
+                DatabaseHelper.executeUpdate(sql, parameters);
             } else { // TODO: table items! check character on online?
                 parameters.clear();
                 parameters.add(charId);

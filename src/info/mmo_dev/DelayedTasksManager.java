@@ -130,7 +130,7 @@ public class DelayedTasksManager {
     private void startDelayedItemsListener() {
         String sqlSelect;
         String sqlLastId;
-        String charIdColumn = DatabaseHelper.getTable("characters").contains("charId") ? "charId" : "obj_Id";
+        String charIdColumn = DatabaseHelper.getTable("characters").columnExists("charId") ? "charId" : "obj_Id";
 
         if (DatabaseHelper.tableExists("items_delayed")) {
             sqlLastId = "SELECT payment_id AS id FROM items_delayed ORDER BY payment_id DESC LIMIT 1";
@@ -333,7 +333,7 @@ public class DelayedTasksManager {
                                 int limit = 50;
                                 int offset = limit * (currentPage - 1);
 
-                                String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+                                String charIdColumn = DatabaseHelper.getTable("characters").columnExists("obj_Id") ? "obj_Id" : "charId";
                                 List<Object> parameters = new ArrayList<>();
                                 parameters.add(limit);
                                 parameters.add(offset);
@@ -439,7 +439,7 @@ public class DelayedTasksManager {
                             //int charId = charName.matches("\\d*") ? Integer.parseInt(charName) : -1;
                             String result = "Character information:\n";
                             InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
-                            String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+                            String charIdColumn = DatabaseHelper.getTable("characters").columnExists("obj_Id") ? "obj_Id" : "charId";
 
                             List<Object> parameters = new ArrayList<>();
                             parameters.add(query);
@@ -487,7 +487,7 @@ public class DelayedTasksManager {
 
                             String result;
                             InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup();
-                            String charIdColumn = DatabaseHelper.getTable("characters").contains("obj_Id") ? "obj_Id" : "charId";
+                            String charIdColumn = DatabaseHelper.getTable("characters").columnExists("obj_Id") ? "obj_Id" : "charId";
                             List<Object> parameters = new ArrayList<>();
                             parameters.add(command[1]);
                             parameters.add(command[1]);
